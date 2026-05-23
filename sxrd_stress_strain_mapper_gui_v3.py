@@ -736,107 +736,183 @@ class StressStrainMapperApp:
         self.result_summary = tk.StringVar(value="确认推荐并运行后，这里会显示有效行数、超范围行数和导出提示。")
 
     def _build_layout(self):
-        main = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
-        main.pack(fill=tk.BOTH, expand=True)
+        self._configure_styles()
+        self.root.geometry("1320x840")
+        self.root.minsize(1180, 760)
 
-        left = ttk.Frame(main, padding=10)
-        right = ttk.Frame(main, padding=6)
-        main.add(left, weight=0)
-        main.add(right, weight=1)
+        shell = ttk.Frame(self.root, style="App.TFrame")
+        shell.pack(fill=tk.BOTH, expand=True)
+        shell.rowconfigure(1, weight=1)
+        shell.columnconfigure(0, weight=1)
 
-        self._build_controls(left)
-        self._build_visual_area(right)
+        status_bar = ttk.Frame(shell, style="Header.TFrame", padding=(14, 10))
+        status_bar.grid(row=0, column=0, sticky="ew")
+        status_bar.columnconfigure(0, weight=1)
+        status_bar.columnconfigure(1, weight=0)
+        ttk.Label(
+            status_bar,
+            text="SXRD 原位谱线 应力-应变映射工具",
+            style="AppTitle.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        self.wizard_state_label = ttk.Label(status_bar, textvariable=self.wizard_state, style="Muted.TLabel")
+        self.wizard_state_label.grid(row=1, column=0, sticky="w", pady=(2, 0))
+        self.status_bar_status_label = ttk.Label(
+            status_bar,
+            textvariable=self.result_status,
+            style="StatusPill.TLabel",
+            anchor="center",
+        )
+        self.status_bar_status_label.grid(row=0, column=1, rowspan=2, sticky="e", padx=(12, 0))
+
+        main = ttk.PanedWindow(shell, orient=tk.HORIZONTAL)
+        main.grid(row=1, column=0, sticky="nsew", padx=10, pady=(8, 10))
+
+        self.left_panel = ttk.Frame(main, width=420, style="Panel.TFrame")
+        self.left_panel.grid_propagate(False)
+        self.right_panel = ttk.Frame(main, style="Workspace.TFrame")
+        main.add(self.left_panel, weight=0)
+        main.add(self.right_panel, weight=1)
+
+        self._build_controls(self.left_panel)
+        self._build_visual_area(self.right_panel)
+
+    def _configure_styles(self):
+        self.root.configure(bg="#f3f6fb")
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure("App.TFrame", background="#f3f6fb")
+        style.configure("Header.TFrame", background="#eaf1fb")
+        style.configure("Panel.TFrame", background="#f8fafc")
+        style.configure("Workspace.TFrame", background="#f3f6fb")
+        style.configure("AppTitle.TLabel", background="#eaf1fb", foreground="#0f172a", font=("TkDefaultFont", 14, "bold"))
+        style.configure("Muted.TLabel", background="#eaf1fb", foreground="#475569")
+        style.configure("StatusPill.TLabel", background="#dbeafe", foreground="#1d4ed8", padding=(12, 5), font=("TkDefaultFont", 10, "bold"))
+        style.configure("Section.TLabelframe", background="#ffffff", bordercolor="#d7dee8", relief="solid")
+        style.configure("Section.TLabelframe.Label", background="#ffffff", foreground="#0f172a", font=("TkDefaultFont", 10, "bold"))
+        style.configure("SectionBody.TFrame", background="#ffffff")
+        style.configure("Control.TLabel", background="#ffffff", foreground="#1f2937")
+        style.configure("Hint.TLabel", background="#ffffff", foreground="#64748b")
+        style.configure("BlueHint.TLabel", background="#ffffff", foreground="#24527a")
+        style.configure("Primary.TButton", padding=(10, 8), font=("TkDefaultFont", 10, "bold"))
+        style.configure("Secondary.TButton", padding=(8, 5))
+        style.configure("Tool.TCheckbutton", background="#ffffff", foreground="#1f2937")
+
+    def _build_scrollable_controls(self, parent) -> ttk.Frame:
+        parent.rowconfigure(0, weight=1)
+        parent.columnconfigure(0, weight=1)
+        self.control_canvas = tk.Canvas(parent, background="#f8fafc", highlightthickness=0, borderwidth=0, width=408)
+        control_scrollbar = ttk.Scrollbar(parent, orient="vertical", command=self.control_canvas.yview)
+        self.control_canvas.configure(yscrollcommand=control_scrollbar.set)
+        self.control_canvas.grid(row=0, column=0, sticky="nsew")
+        control_scrollbar.grid(row=0, column=1, sticky="ns")
+
+        body = ttk.Frame(self.control_canvas, style="Panel.TFrame", padding=(10, 8))
+        self.control_window = self.control_canvas.create_window((0, 0), window=body, anchor="nw")
+
+        def update_scrollregion(_event=None):
+            self.control_canvas.configure(scrollregion=self.control_canvas.bbox("all"))
+
+        def sync_width(event):
+            self.control_canvas.itemconfigure(self.control_window, width=event.width)
+
+        body.bind("<Configure>", update_scrollregion)
+        self.control_canvas.bind("<Configure>", sync_width)
+        self.control_canvas.bind_all("<MouseWheel>", lambda event: self.control_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units"))
+        return body
+
+    def _grid_labeled(self, parent, row: int, label: str, widget, pady: int = 2):
+        ttk.Label(parent, text=label, style="Control.TLabel", width=12).grid(row=row, column=0, sticky="w", pady=pady)
+        widget.grid(row=row, column=1, sticky="ew", pady=pady)
+
+    def _create_collapsible_section(self, parent, row: int, title: str, summary: str) -> ttk.Frame:
+        container = ttk.Frame(parent, style="SectionBody.TFrame")
+        container.grid(row=row, column=0, sticky="ew", pady=(0, 6))
+        container.columnconfigure(0, weight=1)
+        visible = tk.BooleanVar(value=False)
+        header = ttk.Checkbutton(
+            container,
+            text=f"{title}  ·  {summary}",
+            variable=visible,
+            command=lambda t=title: self._toggle_advanced_section(t),
+            style="Tool.TCheckbutton",
+        )
+        header.grid(row=0, column=0, sticky="ew", padx=6, pady=(4, 2))
+        body = ttk.Frame(container, style="SectionBody.TFrame", padding=(12, 4, 8, 8))
+        body.columnconfigure(1, weight=1)
+        self.advanced_sections[title] = {"frame": container, "body": body, "visible": visible, "header": header}
+        return body
+
+    def _toggle_advanced_section(self, title: str):
+        section = self.advanced_sections[title]
+        if bool(section["visible"].get()):
+            section["body"].grid(row=1, column=0, sticky="ew")
+        else:
+            section["body"].grid_remove()
+        if hasattr(self, "control_canvas"):
+            self.root.after_idle(lambda: self.control_canvas.configure(scrollregion=self.control_canvas.bbox("all")))
 
     def _build_controls(self, parent):
-        parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(1, weight=1)
+        body = self._build_scrollable_controls(parent)
+        body.columnconfigure(0, weight=1)
 
-        header = ttk.Frame(parent)
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="三步完成应力-应变映射", font=("TkDefaultFont", 13, "bold")).grid(row=0, column=0, sticky="w")
-        self.wizard_state_label = ttk.Label(header, textvariable=self.wizard_state, foreground="#555555")
-        self.wizard_state_label.grid(row=1, column=0, sticky="w", pady=(2, 0))
-
-        self.wizard = ttk.Notebook(parent)
-        self.wizard.grid(row=1, column=0, sticky="nsew")
-
-        ref_box = ttk.Frame(self.wizard, padding=10)
-        st_box = ttk.Frame(self.wizard, padding=10)
-        result_box = ttk.Frame(self.wizard, padding=10)
-        self.wizard.add(ref_box, text="1 参考曲线")
-        self.wizard.add(st_box, text="2 线站数据")
-        self.wizard.add(result_box, text="3 结果导出")
+        ref_box = ttk.LabelFrame(body, text="1 参考曲线", style="Section.TLabelframe", padding=10)
+        st_box = ttk.LabelFrame(body, text="2 线站数据", style="Section.TLabelframe", padding=10)
+        result_box = ttk.LabelFrame(body, text="3 映射运行", style="Section.TLabelframe", padding=10)
+        ref_box.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        st_box.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        result_box.grid(row=2, column=0, sticky="ew", pady=(0, 8))
 
         # Step 1: reference file
         ref_box.columnconfigure(1, weight=1)
-        ttk.Label(ref_box, text="先加载完整参考应力-应变曲线。", font=("TkDefaultFont", 11, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(ref_box, text="程序会推荐参考应变列、应力列和单位；你可以在下方手动修正。", foreground="#666666", wraplength=360).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 10))
+        ttk.Label(ref_box, text="加载完整参考曲线，确认应变/应力列与单位。", style="Hint.TLabel", wraplength=340).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
-        ttk.Button(ref_box, text="① 加载参考曲线 CSV/TXT/XLSX", command=self.load_reference).grid(row=2, column=0, columnspan=2, sticky="ew", ipady=6)
-        self.ref_label = ttk.Label(ref_box, text="未加载", foreground="#666666", wraplength=320)
-        self.ref_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 8))
-        ttk.Label(ref_box, textvariable=self.ref_recommendation, foreground="#24527a", wraplength=360).grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        ttk.Button(ref_box, text="加载参考曲线 CSV/TXT/XLSX", command=self.load_reference, style="Secondary.TButton").grid(row=1, column=0, columnspan=2, sticky="ew")
+        self.ref_label = ttk.Label(ref_box, text="未加载", style="Hint.TLabel", wraplength=340)
+        self.ref_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 8))
+        ttk.Label(ref_box, textvariable=self.ref_recommendation, style="BlueHint.TLabel", wraplength=340).grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
         self.ref_strain_combo = ttk.Combobox(ref_box, textvariable=self.ref_strain_col, state="readonly", width=26)
-        self.ref_strain_combo.grid(row=5, column=1, sticky="ew", pady=2)
-
-        ttk.Label(ref_box, text="参考应变列").grid(row=5, column=0, sticky="w")
-        ttk.Label(ref_box, text="参考应力列").grid(row=6, column=0, sticky="w")
         self.ref_stress_combo = ttk.Combobox(ref_box, textvariable=self.ref_stress_col, state="readonly", width=26)
-        self.ref_stress_combo.grid(row=6, column=1, sticky="ew", pady=2)
-
-        ttk.Label(ref_box, text="参考应变单位").grid(row=7, column=0, sticky="w")
         self.ref_strain_unit_combo = ttk.Combobox(ref_box, textvariable=self.ref_strain_unit, values=[STRAIN_FRACTION, STRAIN_PERCENT], state="readonly", width=26)
-        self.ref_strain_unit_combo.grid(row=7, column=1, sticky="ew", pady=2)
-
-        ttk.Label(ref_box, text="参考应力单位").grid(row=8, column=0, sticky="w")
         self.ref_stress_unit_combo = ttk.Combobox(ref_box, textvariable=self.ref_stress_unit, values=[STRESS_MPA, STRESS_GPA, STRESS_PA], state="readonly", width=26)
-        self.ref_stress_unit_combo.grid(row=8, column=1, sticky="ew", pady=2)
-
-        ttk.Button(ref_box, text="下一步：加载线站数据", command=lambda: self.wizard.select(1)).grid(row=9, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        self._grid_labeled(ref_box, 4, "应变列", self.ref_strain_combo)
+        self._grid_labeled(ref_box, 5, "应力列", self.ref_stress_combo)
+        self._grid_labeled(ref_box, 6, "应变单位", self.ref_strain_unit_combo)
+        self._grid_labeled(ref_box, 7, "应力单位", self.ref_stress_unit_combo)
 
         # Step 2: station file and recommendation confirmation
         st_box.columnconfigure(1, weight=1)
-        ttk.Label(st_box, text="再加载单个线站数据文件。", font=("TkDefaultFont", 11, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(st_box, text="程序会推荐输入列和换算方向。确认前不会运行映射。", foreground="#666666", wraplength=360).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 10))
+        ttk.Label(st_box, text="加载线站数据，检查推荐模式、编号和输入列。", style="Hint.TLabel", wraplength=340).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
-        ttk.Button(st_box, text="② 加载线站数据 CSV/TXT/XLSX", command=self.load_station).grid(row=2, column=0, columnspan=2, sticky="ew", ipady=6)
-        self.station_label = ttk.Label(st_box, text="未加载", foreground="#666666", wraplength=320)
-        self.station_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 8))
-        ttk.Label(st_box, textvariable=self.station_recommendation, foreground="#24527a", wraplength=360).grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        ttk.Button(st_box, text="加载线站数据 CSV/TXT/XLSX", command=self.load_station, style="Secondary.TButton").grid(row=1, column=0, columnspan=2, sticky="ew")
+        self.station_label = ttk.Label(st_box, text="未加载", style="Hint.TLabel", wraplength=340)
+        self.station_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 8))
+        ttk.Label(st_box, textvariable=self.station_recommendation, style="BlueHint.TLabel", wraplength=340).grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
         mode_combo = ttk.Combobox(st_box, textvariable=self.station_mode,
                                   values=[MODE_STRAIN_ONLY, MODE_STRESS_ONLY, MODE_BOTH],
                                   state="readonly", width=38)
-        mode_combo.grid(row=5, column=1, sticky="ew", pady=2)
         mode_combo.bind("<<ComboboxSelected>>", self._on_station_mode_changed)
 
-        ttk.Label(st_box, text="模式").grid(row=5, column=0, sticky="w")
-        ttk.Label(st_box, text="谱线/帧编号列").grid(row=6, column=0, sticky="w")
         self.station_id_combo = ttk.Combobox(st_box, textvariable=self.station_id_col, state="readonly", width=26)
-        self.station_id_combo.grid(row=6, column=1, sticky="ew", pady=2)
-
-        ttk.Label(st_box, text="线站应变列").grid(row=7, column=0, sticky="w")
         self.station_strain_combo = ttk.Combobox(st_box, textvariable=self.station_strain_col, state="readonly", width=26)
-        self.station_strain_combo.grid(row=7, column=1, sticky="ew", pady=2)
-
-        ttk.Label(st_box, text="线站应力列").grid(row=8, column=0, sticky="w")
         self.station_stress_combo = ttk.Combobox(st_box, textvariable=self.station_stress_col, state="readonly", width=26)
-        self.station_stress_combo.grid(row=8, column=1, sticky="ew", pady=2)
-
-        ttk.Label(st_box, text="线站应变单位").grid(row=9, column=0, sticky="w")
         self.station_strain_unit_combo = ttk.Combobox(st_box, textvariable=self.station_strain_unit, values=[STRAIN_FRACTION, STRAIN_PERCENT], state="readonly", width=26)
-        self.station_strain_unit_combo.grid(row=9, column=1, sticky="ew", pady=2)
-
-        ttk.Label(st_box, text="线站应力单位").grid(row=10, column=0, sticky="w")
         self.station_stress_unit_combo = ttk.Combobox(st_box, textvariable=self.station_stress_unit, values=[STRESS_MPA, STRESS_GPA, STRESS_PA], state="readonly", width=26)
-        self.station_stress_unit_combo.grid(row=10, column=1, sticky="ew", pady=2)
+        self._grid_labeled(st_box, 4, "模式", mode_combo)
+        self._grid_labeled(st_box, 5, "编号列", self.station_id_combo)
+        self._grid_labeled(st_box, 6, "应变列", self.station_strain_combo)
+        self._grid_labeled(st_box, 7, "应力列", self.station_stress_combo)
+        self._grid_labeled(st_box, 8, "应变单位", self.station_strain_unit_combo)
+        self._grid_labeled(st_box, 9, "应力单位", self.station_stress_unit_combo)
 
-        self.mode_hint = ttk.Label(st_box, text="", foreground="#555555", wraplength=340)
-        self.mode_hint.grid(row=11, column=0, columnspan=2, sticky="w", pady=(5, 0))
-        self.confirm_button = ttk.Button(st_box, text="确认推荐，进入运行", command=self.confirm_recommendations)
-        self.confirm_button.grid(row=12, column=0, columnspan=2, sticky="ew", pady=(10, 0), ipady=4)
+        self.mode_hint = ttk.Label(st_box, text="", style="Hint.TLabel", wraplength=340)
+        self.mode_hint.grid(row=10, column=0, columnspan=2, sticky="w", pady=(5, 0))
+        self.confirm_button = ttk.Button(st_box, text="确认推荐", command=self.confirm_recommendations, style="Secondary.TButton")
+        self.confirm_button.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         for combo in [
             self.ref_strain_combo,
             self.ref_stress_combo,
@@ -853,92 +929,98 @@ class StressStrainMapperApp:
 
         # Step 3: run, quality summary, export
         result_box.columnconfigure(0, weight=1)
-        ttk.Label(result_box, text="最后运行映射并导出。", font=("TkDefaultFont", 11, "bold")).grid(row=0, column=0, sticky="w")
-        self.result_status_label = ttk.Label(result_box, textvariable=self.result_status, foreground="#555555", wraplength=360)
-        self.result_status_label.grid(row=1, column=0, sticky="w", pady=(6, 4))
-        ttk.Label(result_box, textvariable=self.result_summary, foreground="#555555", wraplength=360).grid(row=2, column=0, sticky="w", pady=(0, 10))
+        self.result_status_label = ttk.Label(result_box, textvariable=self.result_status, style="BlueHint.TLabel", wraplength=340)
+        self.result_status_label.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(result_box, textvariable=self.result_summary, style="Hint.TLabel", wraplength=340).grid(row=1, column=0, sticky="w", pady=(0, 8))
 
-        self.run_button = ttk.Button(result_box, text="③ 运行映射 / 更新图", command=self.run_mapping)
-        self.run_button.grid(row=3, column=0, sticky="ew", pady=2, ipady=6)
-        self.export_button = ttk.Button(result_box, text="导出结果 CSV/XLSX", command=self.export_result)
-        self.export_button.grid(row=4, column=0, sticky="ew", pady=2)
-        self.save_plot_button = ttk.Button(result_box, text="保存当前图 PNG/PDF/SVG", command=self.save_plot)
-        self.save_plot_button.grid(row=5, column=0, sticky="ew", pady=2)
+        self.run_button = ttk.Button(result_box, text="运行映射 / 更新图", command=self.run_mapping, style="Primary.TButton")
+        self.run_button.grid(row=2, column=0, sticky="ew", pady=(2, 5))
+        self.export_button = ttk.Button(result_box, text="导出结果 CSV/XLSX", command=self.export_result, style="Secondary.TButton")
+        self.export_button.grid(row=3, column=0, sticky="ew", pady=2)
+        self.save_plot_button = ttk.Button(result_box, text="保存当前图 PNG/PDF/SVG", command=self.save_plot, style="Secondary.TButton")
+        self.save_plot_button.grid(row=4, column=0, sticky="ew", pady=2)
 
-        ttk.Checkbutton(result_box, text="显示高级设置", variable=self.advanced_visible, command=self._toggle_advanced_settings).grid(row=6, column=0, sticky="w", pady=(10, 4))
-        self.advanced_frame = ttk.LabelFrame(result_box, text="高级设置", padding=8)
-        self.advanced_frame.columnconfigure(1, weight=1)
+        ttk.Checkbutton(
+            result_box,
+            text="显示高级设置",
+            variable=self.advanced_visible,
+            command=self._toggle_advanced_settings,
+            style="Tool.TCheckbutton",
+        ).grid(row=5, column=0, sticky="w", pady=(8, 4))
+
+        self.advanced_frame = ttk.LabelFrame(body, text="高级设置", style="Section.TLabelframe", padding=8)
+        self.advanced_frame.columnconfigure(0, weight=1)
         opt_box = self.advanced_frame
-        opt_box.columnconfigure(1, weight=1)
+        self.advanced_sections = {}
 
-        ttk.Label(opt_box, text="插值方法").grid(row=0, column=0, sticky="w")
-        ttk.Combobox(opt_box, textvariable=self.interp_method, values=[METHOD_PCHIP, METHOD_LINEAR], state="readonly", width=30).grid(row=0, column=1, sticky="ew", pady=2)
+        interp_body = self._create_collapsible_section(opt_box, 0, "插值与反插值", "PCHIP；峰值前；去除下降点")
+        interp_body.columnconfigure(1, weight=1)
+        self._grid_labeled(
+            interp_body,
+            0,
+            "插值方法",
+            ttk.Combobox(interp_body, textvariable=self.interp_method, values=[METHOD_PCHIP, METHOD_LINEAR], state="readonly", width=30),
+        )
 
-        ttk.Checkbutton(opt_box, text="应力→应变时只使用峰值应力前的加载分支", variable=self.inverse_pre_peak).grid(row=1, column=0, columnspan=2, sticky="w", pady=2)
-        ttk.Checkbutton(opt_box, text="应力→应变时自动删除非单调应力下降点", variable=self.inverse_monotonic).grid(row=2, column=0, columnspan=2, sticky="w", pady=2)
+        ttk.Checkbutton(interp_body, text="应力→应变时只使用峰值应力前的加载分支", variable=self.inverse_pre_peak, style="Tool.TCheckbutton").grid(row=1, column=0, columnspan=2, sticky="w", pady=2)
+        ttk.Checkbutton(interp_body, text="应力→应变时自动删除非单调应力下降点", variable=self.inverse_monotonic, style="Tool.TCheckbutton").grid(row=2, column=0, columnspan=2, sticky="w", pady=2)
 
         method_note = "PCHIP 可用" if SCIPY_AVAILABLE else "未检测到 scipy：PCHIP 会自动降级为线性插值"
-        ttk.Label(opt_box, text=method_note, foreground="#666666", wraplength=340).grid(row=3, column=0, columnspan=2, sticky="w", pady=(5, 0))
+        ttk.Label(interp_body, text=method_note, style="Hint.TLabel", wraplength=320).grid(row=3, column=0, columnspan=2, sticky="w", pady=(5, 0))
 
-        view_box = ttk.Frame(opt_box)
-        view_box.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        view_box = self._create_collapsible_section(opt_box, 1, "平滑显示", "原始点；可选 smooth_* 辅助列")
         view_box.columnconfigure(1, weight=1)
 
-        ttk.Checkbutton(view_box, text="显示原始映射点", variable=self.show_raw_points).grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
-        ttk.Checkbutton(view_box, text="显示/导出平滑辅助列", variable=self.show_smoothed).grid(row=1, column=0, columnspan=2, sticky="w", pady=2)
+        ttk.Checkbutton(view_box, text="显示原始映射点", variable=self.show_raw_points, style="Tool.TCheckbutton").grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
+        ttk.Checkbutton(view_box, text="显示/导出平滑辅助列", variable=self.show_smoothed, style="Tool.TCheckbutton").grid(row=1, column=0, columnspan=2, sticky="w", pady=2)
 
-        ttk.Label(view_box, text="平滑方法").grid(row=2, column=0, sticky="w")
-        ttk.Combobox(
+        self._grid_labeled(view_box, 2, "平滑方法", ttk.Combobox(
             view_box,
             textvariable=self.smooth_method,
             values=[SMOOTH_NONE, SMOOTH_ROLLING_MEDIAN, SMOOTH_ROLLING_MEAN, SMOOTH_SAVGOL],
             state="readonly",
             width=34,
-        ).grid(row=2, column=1, sticky="ew", pady=2)
+        ))
 
-        ttk.Label(view_box, text="窗口点数").grid(row=3, column=0, sticky="w")
-        ttk.Spinbox(view_box, from_=3, to=101, increment=2, textvariable=self.smooth_window, width=8).grid(row=3, column=1, sticky="w", pady=2)
+        self._grid_labeled(view_box, 3, "窗口点数", ttk.Spinbox(view_box, from_=3, to=101, increment=2, textvariable=self.smooth_window, width=8))
+        view_box.grid_slaves(row=3, column=1)[0].grid(sticky="w")
 
-        ttk.Label(view_box, text="SG 多项式阶数").grid(row=4, column=0, sticky="w")
-        ttk.Spinbox(view_box, from_=1, to=5, increment=1, textvariable=self.smooth_polyorder, width=8).grid(row=4, column=1, sticky="w", pady=2)
+        self._grid_labeled(view_box, 4, "SG 阶数", ttk.Spinbox(view_box, from_=1, to=5, increment=1, textvariable=self.smooth_polyorder, width=8))
+        view_box.grid_slaves(row=4, column=1)[0].grid(sticky="w")
 
         ttk.Label(
             view_box,
             text="说明：平滑默认只作为视觉辅助，并新增 smooth_* 列；不会覆盖原始 mapped_* 数据。",
-            foreground="#666666",
-            wraplength=340,
+            style="Hint.TLabel",
+            wraplength=320,
         ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(5, 0))
 
-        align_box = ttk.LabelFrame(opt_box, text="塑性应变最大值对齐", padding=6)
-        align_box.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        align_box = self._create_collapsible_section(opt_box, 2, "塑性应变对齐", "最大值比例缩放；保留审计列")
         align_box.columnconfigure(0, weight=1)
         self.align_strain_check = ttk.Checkbutton(
             align_box,
             text="将线站最大塑性应变缩放到参考曲线最大塑性应变",
             variable=self.align_strain_max_to_reference,
             command=self._on_alignment_option_changed,
+            style="Tool.TCheckbutton",
         )
-        self.align_strain_check.grid(row=0, column=0, sticky="w")
+        self.align_strain_check.grid(row=0, column=0, sticky="w", pady=2)
         ttk.Label(
             align_box,
             textvariable=self.strain_alignment_hint,
-            foreground="#555555",
-            wraplength=340,
+            style="Hint.TLabel",
+            wraplength=320,
         ).grid(row=1, column=0, sticky="w", pady=(4, 0))
 
+        ref_option_box = self._create_collapsible_section(opt_box, 3, "参考归零", "仅用于零点偏移")
         ttk.Checkbutton(
-            opt_box,
+            ref_option_box,
             text="参考曲线首点归零（仅在存在零点偏移时勾选）",
             variable=self.zero_reference,
             command=self._on_alignment_option_changed,
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 0))
+            style="Tool.TCheckbutton",
+        ).grid(row=0, column=0, sticky="w", pady=2)
 
-        # Action-oriented log
-        log_box = ttk.LabelFrame(parent, text="问题提醒 / 详细错误", padding=6)
-        log_box.grid(row=2, column=0, sticky="nsew", pady=(8, 0))
-        parent.rowconfigure(2, weight=1)
-        self.log_text = tk.Text(log_box, height=12, width=46, wrap="word")
-        self.log_text.pack(fill=tk.BOTH, expand=True)
         self._toggle_advanced_settings()
         self._update_wizard_state_display()
 
@@ -947,28 +1029,31 @@ class StressStrainMapperApp:
         parent.rowconfigure(1, weight=1)
         parent.columnconfigure(0, weight=1)
 
-        fig_frame = ttk.Frame(parent)
-        fig_frame.grid(row=0, column=0, sticky="nsew")
-        fig_frame.rowconfigure(0, weight=1)
-        fig_frame.columnconfigure(0, weight=1)
+        self.plot_frame = ttk.LabelFrame(parent, text="曲线视图", style="Section.TLabelframe", padding=6)
+        self.plot_frame.grid(row=0, column=0, sticky="nsew")
+        self.plot_frame.rowconfigure(0, weight=1)
+        self.plot_frame.columnconfigure(0, weight=1)
 
         self.fig = Figure(figsize=(8.5, 5.8), dpi=100)
         self.ax_curve = self.fig.add_subplot(211)
         self.ax_series = self.fig.add_subplot(212)
         self.fig.tight_layout(pad=2.0)
 
-        self.canvas = FigureCanvasTkAgg(self.fig, master=fig_frame)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
 
-        toolbar = NavigationToolbar2Tk(self.canvas, fig_frame, pack_toolbar=False)
+        toolbar = NavigationToolbar2Tk(self.canvas, self.plot_frame, pack_toolbar=False)
         toolbar.update()
         toolbar.grid(row=1, column=0, sticky="ew")
 
-        table_box = ttk.LabelFrame(parent, text="结果预览（前 200 行）", padding=6)
-        table_box.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+        self.detail_notebook = ttk.Notebook(parent)
+        self.detail_notebook.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+
+        table_box = ttk.Frame(self.detail_notebook, padding=6)
         table_box.rowconfigure(0, weight=1)
         table_box.columnconfigure(0, weight=1)
+        self.detail_notebook.add(table_box, text="结果表")
 
         self.tree = ttk.Treeview(table_box, show="headings")
         yscroll = ttk.Scrollbar(table_box, orient="vertical", command=self.tree.yview)
@@ -977,6 +1062,16 @@ class StressStrainMapperApp:
         self.tree.grid(row=0, column=0, sticky="nsew")
         yscroll.grid(row=0, column=1, sticky="ns")
         xscroll.grid(row=1, column=0, sticky="ew")
+
+        log_box = ttk.Frame(self.detail_notebook, padding=6)
+        log_box.rowconfigure(0, weight=1)
+        log_box.columnconfigure(0, weight=1)
+        self.detail_notebook.add(log_box, text="问题日志")
+        self.log_text = tk.Text(log_box, height=8, wrap="word", relief="flat", background="#ffffff", foreground="#0f172a")
+        log_scroll = ttk.Scrollbar(log_box, orient="vertical", command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=log_scroll.set)
+        self.log_text.grid(row=0, column=0, sticky="nsew")
+        log_scroll.grid(row=0, column=1, sticky="ns")
 
     def _log_startup_notes(self):
         self.log("按 1→2→3 完成映射：先加载参考曲线，再加载线站数据，确认推荐后运行。")
@@ -988,14 +1083,23 @@ class StressStrainMapperApp:
 
     def _toggle_advanced_settings(self):
         if bool(self.advanced_visible.get()):
-            self.advanced_frame.grid(row=7, column=0, sticky="ew", pady=(0, 8))
+            self.advanced_frame.grid(row=3, column=0, sticky="ew", pady=(0, 8))
+            if hasattr(self, "advanced_sections") and not any(bool(section["visible"].get()) for section in self.advanced_sections.values()):
+                first_key = next(iter(self.advanced_sections), None)
+                if first_key is not None:
+                    self.advanced_sections[first_key]["visible"].set(True)
+                    self._toggle_advanced_section(first_key)
         else:
             self.advanced_frame.grid_remove()
+        if hasattr(self, "control_canvas"):
+            self.root.after_idle(lambda: self.control_canvas.configure(scrollregion=self.control_canvas.bbox("all")))
 
     def _set_result_status(self, text: str, color: str = "#555555"):
         self.result_status.set(text)
         if hasattr(self, "result_status_label"):
             self.result_status_label.config(foreground=color)
+        if hasattr(self, "status_bar_status_label"):
+            self.status_bar_status_label.config(foreground=color)
 
     def _mark_recommendation_dirty(self, *_):
         if self.ref_df is not None and self.station_df is not None:

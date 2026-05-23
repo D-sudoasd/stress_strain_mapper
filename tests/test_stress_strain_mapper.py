@@ -405,16 +405,41 @@ class StressStrainMapperGuiRegressionTest(unittest.TestCase):
         self.assertEqual(str(self.app.export_button.cget("state")), "disabled")
         self.assertTrue([msg for msg in self.messages if msg[0] == "error"])
 
-    def test_initial_layout_keeps_plot_area_wide_enough(self):
-        main = self.root.winfo_children()[0]
-        left, right = main.winfo_children()
-
-        self.root.geometry("1280x820")
+    def test_workstation_layout_prioritizes_plot_area_and_moves_logs_to_tab(self):
+        self.root.geometry("1280x800")
         self.root.update_idletasks()
         self.root.update()
 
-        self.assertLessEqual(left.winfo_width(), 520)
-        self.assertGreaterEqual(right.winfo_width(), 740)
+        self.assertTrue(hasattr(self.app, "left_panel"))
+        self.assertTrue(hasattr(self.app, "plot_frame"))
+        self.assertTrue(hasattr(self.app, "detail_notebook"))
+        self.assertLessEqual(self.app.left_panel.winfo_width(), 440)
+        self.assertGreaterEqual(self.app.plot_frame.winfo_width(), 780)
+        self.assertIn("结果表", [self.app.detail_notebook.tab(i, "text") for i in self.app.detail_notebook.tabs()])
+        self.assertIn("问题日志", [self.app.detail_notebook.tab(i, "text") for i in self.app.detail_notebook.tabs()])
+
+    def test_advanced_settings_are_collapsed_by_default_and_scrollable(self):
+        self.root.geometry("1280x800")
+        self.root.update_idletasks()
+        self.root.update()
+
+        self.assertTrue(hasattr(self.app, "control_canvas"))
+        self.assertTrue(hasattr(self.app, "advanced_sections"))
+        self.assertFalse(bool(self.app.advanced_visible.get()))
+        self.assertFalse(self.app.advanced_frame.winfo_ismapped())
+        self.assertGreaterEqual(
+            set(self.app.advanced_sections.keys()),
+            {"插值与反插值", "平滑显示", "塑性应变对齐", "参考归零"},
+        )
+        self.assertTrue(all(not section["body"].winfo_ismapped() for section in self.app.advanced_sections.values()))
+
+        self.app.advanced_visible.set(True)
+        self.app._toggle_advanced_settings()
+        self.root.update_idletasks()
+        self.root.update()
+
+        self.assertTrue(self.app.advanced_frame.winfo_ismapped())
+        self.assertTrue(any(section["body"].winfo_ismapped() for section in self.app.advanced_sections.values()))
 
 
 if __name__ == "__main__":

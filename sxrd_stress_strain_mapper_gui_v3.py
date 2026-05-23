@@ -441,6 +441,18 @@ def within_reference_ranges(eps_fraction, stress_mpa, ref_eps_fraction, ref_stre
     )
 
 
+def zero_to_first_finite(values) -> Tuple[np.ndarray, float]:
+    """Subtract the first finite value while leaving NaN/inf entries unchanged."""
+    arr = np.asarray(values, dtype=float)
+    zeroed = arr.copy()
+    finite_idx = np.flatnonzero(np.isfinite(arr))
+    if finite_idx.size == 0:
+        return zeroed, np.nan
+    offset = float(arr[finite_idx[0]])
+    zeroed[finite_idx] = zeroed[finite_idx] - offset
+    return zeroed, offset
+
+
 def _positive_finite_max(values, label: str) -> float:
     arr = np.asarray(values, dtype=float)
     finite_positive = arr[np.isfinite(arr) & (arr > 0)]
@@ -1012,10 +1024,10 @@ class StressStrainMapperApp:
             wraplength=320,
         ).grid(row=1, column=0, sticky="w", pady=(4, 0))
 
-        ref_option_box = self._create_collapsible_section(opt_box, 3, "参考归零", "仅用于零点偏移")
+        ref_option_box = self._create_collapsible_section(opt_box, 3, "起点归零 / 基线校正", "参考和线站都减去首个有效点")
         ttk.Checkbutton(
             ref_option_box,
-            text="参考曲线首点归零（仅在存在零点偏移时勾选）",
+            text="参考曲线和线站数据首个有效点归零（仅在存在零点/预载偏移时勾选）",
             variable=self.zero_reference,
             command=self._on_alignment_option_changed,
             style="Tool.TCheckbutton",
@@ -1115,7 +1127,7 @@ class StressStrainMapperApp:
         if self.result_df is not None:
             self._clear_result_preview()
             self._set_result_status("高级设置已修改，请重新运行映射。", "#8a6d1d")
-            self.result_summary.set("对齐或参考归零设置已改变；旧结果已失效。")
+            self.result_summary.set("对齐或起点归零设置已改变；旧结果已失效。")
             self._update_wizard_state_display()
 
     def _reference_strain_for_alignment(self) -> np.ndarray:
@@ -1125,14 +1137,18 @@ class StressStrainMapperApp:
         eps = convert_strain_to_fraction(eps_raw, self.ref_strain_unit.get())
         tmp = pd.Series(eps).replace([np.inf, -np.inf], np.nan).dropna().sort_values()
         if self.zero_reference.get() and len(tmp) > 0:
-            tmp = tmp - float(tmp.iloc[0])
+            tmp, _ = zero_to_first_finite(tmp.to_numpy(dtype=float))
+            tmp = pd.Series(tmp).replace([np.inf, -np.inf], np.nan).dropna().sort_values()
         return tmp.to_numpy(dtype=float)
 
     def _station_strain_for_alignment(self) -> np.ndarray:
         if self.station_df is None:
             raise ValueError("请先加载线站数据。")
         eps_raw = to_numeric_series(self.station_df, self.station_strain_col.get(), "线站应变")
-        return convert_strain_to_fraction(eps_raw, self.station_strain_unit.get())
+        eps = convert_strain_to_fraction(eps_raw, self.station_strain_unit.get())
+        if self.zero_reference.get():
+            eps, _ = zero_to_first_finite(eps)
+        return eps
 
     def _update_strain_alignment_hint(self):
         if not hasattr(self, "strain_alignment_hint"):
@@ -1329,7 +1345,7 @@ class StressStrainMapperApp:
             messagebox.showerror("读取线站数据失败", str(exc))
             self.log(traceback.format_exc())
 
-    def _prepare_reference(self) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
+    def _prepare_reference(self) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame, dict]:
         if self.ref_df is None:
             raise ValueError("请先加载参考完整应力-应变曲线。")
 
@@ -1342,16 +1358,25 @@ class StressStrainMapperApp:
 
         tmp = pd.DataFrame({"strain_fraction": eps, "stress_MPa": sig})
         tmp = tmp.replace([np.inf, -np.inf], np.nan).dropna().sort_values("strain_fraction")
+        zero_audit = {
+            "start_zero_applied": bool(self.zero_reference.get()),
+            "reference_strain_start_offset_fraction": 0.0,
+            "reference_strain_start_offset_percent": 0.0,
+            "reference_stress_start_offset_MPa": 0.0,
+        }
         if self.zero_reference.get() and len(tmp) > 0:
-            tmp["strain_fraction"] = tmp["strain_fraction"] - float(tmp["strain_fraction"].iloc[0])
-            tmp["stress_MPa"] = tmp["stress_MPa"] - float(tmp["stress_MPa"].iloc[0])
+            tmp["strain_fraction"], eps_offset = zero_to_first_finite(tmp["strain_fraction"].to_numpy(dtype=float))
+            tmp["stress_MPa"], sig_offset = zero_to_first_finite(tmp["stress_MPa"].to_numpy(dtype=float))
+            zero_audit["reference_strain_start_offset_fraction"] = eps_offset
+            zero_audit["reference_strain_start_offset_percent"] = eps_offset * 100.0 if np.isfinite(eps_offset) else np.nan
+            zero_audit["reference_stress_start_offset_MPa"] = sig_offset
 
         if len(tmp) < 2:
             raise ValueError("参考曲线有效点数不足。")
 
         eps_arr = tmp["strain_fraction"].to_numpy(dtype=float)
         sig_arr = tmp["stress_MPa"].to_numpy(dtype=float)
-        return eps_arr, sig_arr, tmp
+        return eps_arr, sig_arr, tmp, zero_audit
 
     def _get_spectrum_ids(self) -> pd.Series:
         assert self.station_df is not None
@@ -1449,12 +1474,14 @@ class StressStrainMapperApp:
     def _build_strain_alignment_payload(
         self,
         eps_ref: np.ndarray,
-        eps_station: np.ndarray,
+        raw_station_eps: np.ndarray,
+        zeroed_station_eps: np.ndarray,
         enabled: bool,
     ) -> Tuple[np.ndarray, dict]:
-        eps_station = np.asarray(eps_station, dtype=float)
+        raw_station_eps = np.asarray(raw_station_eps, dtype=float)
+        zeroed_station_eps = np.asarray(zeroed_station_eps, dtype=float)
         try:
-            diag = compute_strain_alignment_diagnostics(eps_ref, eps_station)
+            diag = compute_strain_alignment_diagnostics(eps_ref, zeroed_station_eps)
         except ValueError:
             if enabled:
                 raise
@@ -1468,7 +1495,7 @@ class StressStrainMapperApp:
             }
 
         if enabled:
-            aligned = apply_strain_alignment(eps_station, diag)
+            aligned = apply_strain_alignment(zeroed_station_eps, diag)
             applied_factor = float(diag["factor"])
             self.log(
                 "已启用塑性应变最大值对齐："
@@ -1479,12 +1506,14 @@ class StressStrainMapperApp:
             if diag["warning"]:
                 self.log("⚠️ 应变对齐：" + diag["warning"])
         else:
-            aligned = eps_station
+            aligned = zeroed_station_eps
             applied_factor = 1.0
 
         audit = {
-            "raw_station_strain_fraction": eps_station,
-            "raw_station_strain_percent": eps_station * 100.0,
+            "raw_station_strain_fraction": raw_station_eps,
+            "raw_station_strain_percent": raw_station_eps * 100.0,
+            "zeroed_station_strain_fraction": zeroed_station_eps,
+            "zeroed_station_strain_percent": zeroed_station_eps * 100.0,
             "aligned_station_strain_fraction": aligned,
             "aligned_station_strain_percent": aligned * 100.0,
             "strain_alignment_factor": applied_factor,
@@ -1498,6 +1527,27 @@ class StressStrainMapperApp:
     def _add_strain_alignment_audit_columns(result: pd.DataFrame, audit: dict) -> None:
         for col, value in audit.items():
             result[col] = value
+
+    def _apply_start_zeroing(self, values) -> Tuple[np.ndarray, float]:
+        arr = np.asarray(values, dtype=float)
+        if self.zero_reference.get():
+            return zero_to_first_finite(arr)
+        return arr.copy(), 0.0
+
+    @staticmethod
+    def _add_start_zero_audit_columns(
+        result: pd.DataFrame,
+        reference_zero_audit: dict,
+        station_strain_offset: float = np.nan,
+        station_stress_offset: float = np.nan,
+    ) -> None:
+        for col, value in reference_zero_audit.items():
+            result[col] = value
+        result["station_strain_start_offset_fraction"] = station_strain_offset
+        result["station_strain_start_offset_percent"] = (
+            station_strain_offset * 100.0 if np.isfinite(station_strain_offset) else np.nan
+        )
+        result["station_stress_start_offset_MPa"] = station_stress_offset
 
     def run_mapping(self):
         if self._mapping_running:
@@ -1525,8 +1575,14 @@ class StressStrainMapperApp:
             self.root.config(cursor="watch")
             self.root.update_idletasks()
 
-            eps_ref, sig_ref, ref_clean = self._prepare_reference()
+            eps_ref, sig_ref, ref_clean, reference_zero_audit = self._prepare_reference()
             self._log_reference_diagnostics(eps_ref, sig_ref)
+            if reference_zero_audit["start_zero_applied"]:
+                self.log(
+                    "已启用起点归零："
+                    f"参考应变偏移 {reference_zero_audit['reference_strain_start_offset_percent']:.4g}%，"
+                    f"参考应力偏移 {reference_zero_audit['reference_stress_start_offset_MPa']:.4g} MPa。"
+                )
             mode = self.station_mode.get()
             method = self.interp_method.get()
 
@@ -1539,16 +1595,28 @@ class StressStrainMapperApp:
                 self._warn_strain_unit_selection("线站应变", eps_station_raw, self.station_strain_unit.get(), eps_station)
                 if np.isfinite(eps_station).any():
                     self.log(f"线站应变检查：{strain_col} 范围 {np.nanmin(eps_station)*100:.4g}% 到 {np.nanmax(eps_station)*100:.4g}%。")
+                eps_station_zeroed, station_strain_offset = self._apply_start_zeroing(eps_station)
+                if reference_zero_audit["start_zero_applied"]:
+                    self.log(
+                        f"起点归零：线站应变偏移 {station_strain_offset * 100.0:.4g}%，"
+                        f"归零后范围 {np.nanmin(eps_station_zeroed)*100:.4g}% 到 {np.nanmax(eps_station_zeroed)*100:.4g}%。"
+                    )
 
                 eps_for_mapping, alignment_audit = self._build_strain_alignment_payload(
                     eps_ref,
                     eps_station,
+                    eps_station_zeroed,
                     enabled=bool(self.align_strain_max_to_reference.get()),
                 )
                 f, xmin, xmax, method_used, interp_diag = make_interpolator_with_diagnostics(eps_ref, sig_ref, method=method)
                 sig_mapped = f(eps_for_mapping)
                 in_range = (eps_for_mapping >= xmin) & (eps_for_mapping <= xmax)
 
+                self._add_start_zero_audit_columns(
+                    result,
+                    reference_zero_audit,
+                    station_strain_offset=station_strain_offset,
+                )
                 self._add_strain_alignment_audit_columns(result, alignment_audit)
                 result["mapped_strain_fraction"] = eps_for_mapping
                 result["mapped_strain_percent"] = eps_for_mapping * 100.0
@@ -1574,6 +1642,12 @@ class StressStrainMapperApp:
                     self.log(f"线站应力检查：{stress_col} 范围 {np.nanmin(sig_station):.4g} 到 {np.nanmax(sig_station):.4g} MPa。")
                     if np.nanmax(np.abs(sig_ref)) > 100 and np.nanmax(np.abs(sig_station)) < 10:
                         self.log("⚠️ 线站应力最大值小于 10 MPa，而参考曲线是几百/上千 MPa。强烈怀疑你把应变列当作应力列，或模式选错。")
+                sig_station_zeroed, station_stress_offset = self._apply_start_zeroing(sig_station)
+                if reference_zero_audit["start_zero_applied"]:
+                    self.log(
+                        f"起点归零：线站应力偏移 {station_stress_offset:.4g} MPa，"
+                        f"归零后范围 {np.nanmin(sig_station_zeroed):.4g} 到 {np.nanmax(sig_station_zeroed):.4g} MPa。"
+                    )
 
                 inv_branch, inverse_diag = build_inverse_branch_with_diagnostics(
                     eps_ref,
@@ -1582,16 +1656,23 @@ class StressStrainMapperApp:
                     monotonicize=self.inverse_monotonic.get(),
                 )
                 f, xmin, xmax, method_used = make_interpolator(inv_branch["stress"], inv_branch["eps"], method=method)
-                eps_mapped = f(sig_station)
-                in_range = (sig_station >= xmin) & (sig_station <= xmax)
+                eps_mapped = f(sig_station_zeroed)
+                in_range = (sig_station_zeroed >= xmin) & (sig_station_zeroed <= xmax)
                 intervals = compute_inverse_strain_intervals(
                     eps_ref,
                     sig_ref,
-                    sig_station,
+                    sig_station_zeroed,
                     use_pre_peak=self.inverse_pre_peak.get(),
                 )
 
-                result["mapped_stress_MPa"] = sig_station
+                self._add_start_zero_audit_columns(
+                    result,
+                    reference_zero_audit,
+                    station_stress_offset=station_stress_offset,
+                )
+                result["raw_station_stress_MPa"] = sig_station
+                result["zeroed_station_stress_MPa"] = sig_station_zeroed
+                result["mapped_stress_MPa"] = sig_station_zeroed
                 result["mapped_strain_fraction"] = eps_mapped
                 result["mapped_strain_percent"] = eps_mapped * 100.0
                 for col in intervals.columns:
@@ -1621,20 +1702,36 @@ class StressStrainMapperApp:
                 eps_station = convert_strain_to_fraction(eps_station_raw, self.station_strain_unit.get())
                 sig_station = convert_stress_to_mpa(sig_station_raw, self.station_stress_unit.get())
                 self._warn_strain_unit_selection("线站应变", eps_station_raw, self.station_strain_unit.get(), eps_station)
+                eps_station_zeroed, station_strain_offset = self._apply_start_zeroing(eps_station)
+                sig_station_zeroed, station_stress_offset = self._apply_start_zeroing(sig_station)
+                if reference_zero_audit["start_zero_applied"]:
+                    self.log(
+                        f"起点归零：线站应变偏移 {station_strain_offset * 100.0:.4g}%，"
+                        f"线站应力偏移 {station_stress_offset:.4g} MPa。"
+                    )
 
                 eps_for_mapping, alignment_audit = self._build_strain_alignment_payload(
                     eps_ref,
                     eps_station,
+                    eps_station_zeroed,
                     enabled=bool(self.align_strain_max_to_reference.get()),
                 )
+                self._add_start_zero_audit_columns(
+                    result,
+                    reference_zero_audit,
+                    station_strain_offset=station_strain_offset,
+                    station_stress_offset=station_stress_offset,
+                )
                 self._add_strain_alignment_audit_columns(result, alignment_audit)
+                result["raw_station_stress_MPa"] = sig_station
+                result["zeroed_station_stress_MPa"] = sig_station_zeroed
                 result["mapped_strain_fraction"] = eps_for_mapping
                 result["mapped_strain_percent"] = eps_for_mapping * 100.0
-                result["mapped_stress_MPa"] = sig_station
+                result["mapped_stress_MPa"] = sig_station_zeroed
                 result["input_type"] = "both"
                 result["input_column"] = f"strain={strain_col}; stress={stress_col}"
                 result["interpolation"] = "none / unit conversion only"
-                result["within_reference_range"] = within_reference_ranges(eps_for_mapping, sig_station, eps_ref, sig_ref)
+                result["within_reference_range"] = within_reference_ranges(eps_for_mapping, sig_station_zeroed, eps_ref, sig_ref)
                 self.log("线站数据已有应力和应变：已完成单位换算、整合和可视化。")
             else:
                 raise ValueError("未知模式。")
@@ -1852,10 +1949,21 @@ class StressStrainMapperApp:
             "mapped_strain_fraction",
             "mapped_strain_percent",
             "mapped_stress_MPa",
+            "start_zero_applied",
+            "reference_strain_start_offset_fraction",
+            "reference_strain_start_offset_percent",
+            "reference_stress_start_offset_MPa",
+            "station_strain_start_offset_fraction",
+            "station_strain_start_offset_percent",
+            "station_stress_start_offset_MPa",
             "raw_station_strain_fraction",
             "raw_station_strain_percent",
+            "zeroed_station_strain_fraction",
+            "zeroed_station_strain_percent",
             "aligned_station_strain_fraction",
             "aligned_station_strain_percent",
+            "raw_station_stress_MPa",
+            "zeroed_station_stress_MPa",
             "strain_alignment_factor",
             "strain_alignment_applied",
             "reference_max_strain_percent",

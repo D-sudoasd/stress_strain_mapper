@@ -15,6 +15,18 @@ SPEC.loader.exec_module(mapper)
 
 
 class StressStrainMapperNumericsTest(unittest.TestCase):
+    def test_zero_to_first_finite_uses_first_valid_value_and_preserves_nan(self):
+        zeroed, offset = mapper.zero_to_first_finite([np.nan, 2.5, 3.0, np.nan, 1.0])
+
+        self.assertAlmostEqual(offset, 2.5)
+        np.testing.assert_allclose(zeroed, [np.nan, 0.0, 0.5, np.nan, -1.5], equal_nan=True)
+
+    def test_zero_to_first_finite_returns_nan_offset_without_valid_values(self):
+        zeroed, offset = mapper.zero_to_first_finite([np.nan, np.inf, -np.inf])
+
+        self.assertTrue(math.isnan(offset))
+        np.testing.assert_allclose(zeroed, [np.nan, np.inf, -np.inf], equal_nan=True)
+
     def test_strain_alignment_scales_station_11_percent_to_reference_10_percent(self):
         diag = mapper.compute_strain_alignment_diagnostics(
             ref_eps_fraction=[0.0, 0.05, 0.10],
@@ -378,6 +390,132 @@ class StressStrainMapperGuiRegressionTest(unittest.TestCase):
         self.assertAlmostEqual(row["mapped_stress_MPa"], 1000.0)
         self.assertTrue(bool(row["within_reference_range"]))
 
+    def test_start_zeroing_runs_before_strain_alignment_and_interpolation(self):
+        self.app.ref_df = pd.DataFrame(
+            {
+                "engineering_strain": [0.02, 0.07, 0.12],
+                "stress_MPa": [10.0, 510.0, 1010.0],
+            }
+        )
+        self.app.station_df = pd.DataFrame({"strain": [0.01, 0.065, 0.12]})
+        self.app.ref_strain_col.set("engineering_strain")
+        self.app.ref_stress_col.set("stress_MPa")
+        self.app.ref_strain_unit.set(mapper.STRAIN_FRACTION)
+        self.app.ref_stress_unit.set(mapper.STRESS_MPA)
+        self.app.station_mode.set(mapper.MODE_STRAIN_ONLY)
+        self.app.station_strain_col.set("strain")
+        self.app.station_strain_unit.set(mapper.STRAIN_FRACTION)
+        self.app.interp_method.set(mapper.METHOD_LINEAR)
+        self.app.zero_reference.set(True)
+        self.app.align_strain_max_to_reference.set(True)
+        self.app.recommendation_confirmed.set(True)
+
+        self.app.run_mapping()
+        self.root.update()
+
+        self.assertFalse([msg for msg in self.messages if msg[0] == "error"])
+        row = self.app.result_df.iloc[-1]
+        self.assertTrue(bool(row["start_zero_applied"]))
+        self.assertAlmostEqual(row["reference_strain_start_offset_fraction"], 0.02)
+        self.assertAlmostEqual(row["reference_stress_start_offset_MPa"], 10.0)
+        self.assertAlmostEqual(row["station_strain_start_offset_fraction"], 0.01)
+        self.assertAlmostEqual(row["raw_station_strain_fraction"], 0.12)
+        self.assertAlmostEqual(row["zeroed_station_strain_fraction"], 0.11)
+        self.assertAlmostEqual(row["aligned_station_strain_fraction"], 0.10)
+        self.assertAlmostEqual(row["strain_alignment_factor"], 0.10 / 0.11)
+        self.assertAlmostEqual(row["mapped_strain_fraction"], 0.10)
+        self.assertAlmostEqual(row["mapped_stress_MPa"], 1000.0)
+        self.assertAlmostEqual(row["reference_max_strain_percent"], 10.0)
+        self.assertAlmostEqual(row["station_max_strain_percent"], 11.0)
+
+    def test_start_zeroing_applies_to_station_stress_before_inverse_mapping(self):
+        self.app.ref_df = pd.DataFrame(
+            {
+                "engineering_strain": [0.02, 0.07, 0.12],
+                "stress_MPa": [10.0, 510.0, 1010.0],
+            }
+        )
+        self.app.station_df = pd.DataFrame({"sigma_MPa": [10.0, 510.0, 1010.0]})
+        self.app.ref_strain_col.set("engineering_strain")
+        self.app.ref_stress_col.set("stress_MPa")
+        self.app.ref_strain_unit.set(mapper.STRAIN_FRACTION)
+        self.app.ref_stress_unit.set(mapper.STRESS_MPA)
+        self.app.station_mode.set(mapper.MODE_STRESS_ONLY)
+        self.app.station_stress_col.set("sigma_MPa")
+        self.app.station_stress_unit.set(mapper.STRESS_MPA)
+        self.app.interp_method.set(mapper.METHOD_LINEAR)
+        self.app.zero_reference.set(True)
+        self.app.recommendation_confirmed.set(True)
+
+        self.app.run_mapping()
+        self.root.update()
+
+        self.assertFalse([msg for msg in self.messages if msg[0] == "error"])
+        row = self.app.result_df.iloc[-1]
+        self.assertTrue(bool(row["start_zero_applied"]))
+        self.assertAlmostEqual(row["reference_strain_start_offset_fraction"], 0.02)
+        self.assertAlmostEqual(row["reference_stress_start_offset_MPa"], 10.0)
+        self.assertAlmostEqual(row["station_stress_start_offset_MPa"], 10.0)
+        self.assertAlmostEqual(row["raw_station_stress_MPa"], 1010.0)
+        self.assertAlmostEqual(row["zeroed_station_stress_MPa"], 1000.0)
+        self.assertAlmostEqual(row["mapped_stress_MPa"], 1000.0)
+        self.assertAlmostEqual(row["mapped_strain_fraction"], 0.10)
+        self.assertTrue(bool(row["within_reference_range"]))
+
+    def test_start_zeroing_audit_columns_are_exported_in_both_mode(self):
+        self.app.ref_df = pd.DataFrame(
+            {
+                "engineering_strain": [0.02, 0.12],
+                "stress_MPa": [10.0, 1010.0],
+            }
+        )
+        self.app.station_df = pd.DataFrame(
+            {
+                "frame": [1, 2],
+                "strain": [0.01, 0.06],
+                "sigma_MPa": [20.0, 520.0],
+            }
+        )
+        self.app.ref_strain_col.set("engineering_strain")
+        self.app.ref_stress_col.set("stress_MPa")
+        self.app.ref_strain_unit.set(mapper.STRAIN_FRACTION)
+        self.app.ref_stress_unit.set(mapper.STRESS_MPA)
+        self.app.station_mode.set(mapper.MODE_BOTH)
+        self.app.station_id_col.set("frame")
+        self.app.station_strain_col.set("strain")
+        self.app.station_strain_unit.set(mapper.STRAIN_FRACTION)
+        self.app.station_stress_col.set("sigma_MPa")
+        self.app.station_stress_unit.set(mapper.STRESS_MPA)
+        self.app.zero_reference.set(True)
+        self.app.recommendation_confirmed.set(True)
+
+        self.app.run_mapping()
+        self.root.update()
+        export_df = self.app._build_export_dataframe(self.app.result_df)
+
+        self.assertFalse([msg for msg in self.messages if msg[0] == "error"])
+        row = export_df.iloc[-1]
+        for col in [
+            "start_zero_applied",
+            "reference_strain_start_offset_fraction",
+            "reference_stress_start_offset_MPa",
+            "station_strain_start_offset_fraction",
+            "station_stress_start_offset_MPa",
+            "raw_station_strain_fraction",
+            "zeroed_station_strain_fraction",
+            "aligned_station_strain_fraction",
+            "raw_station_stress_MPa",
+            "zeroed_station_stress_MPa",
+        ]:
+            self.assertIn(col, export_df.columns)
+        self.assertAlmostEqual(row["raw_station_strain_fraction"], 0.06)
+        self.assertAlmostEqual(row["zeroed_station_strain_fraction"], 0.05)
+        self.assertAlmostEqual(row["aligned_station_strain_fraction"], 0.05)
+        self.assertAlmostEqual(row["raw_station_stress_MPa"], 520.0)
+        self.assertAlmostEqual(row["zeroed_station_stress_MPa"], 500.0)
+        self.assertAlmostEqual(row["mapped_strain_fraction"], 0.05)
+        self.assertAlmostEqual(row["mapped_stress_MPa"], 500.0)
+
     def test_run_mapping_accepts_station_file_that_already_has_spectrum_id(self):
         self._configure_strain_mapping(
             pd.DataFrame({"spectrum_id": [101, 102, 103], "strain": [0.0, 0.01, 0.02]})
@@ -429,7 +567,7 @@ class StressStrainMapperGuiRegressionTest(unittest.TestCase):
         self.assertFalse(self.app.advanced_frame.winfo_ismapped())
         self.assertGreaterEqual(
             set(self.app.advanced_sections.keys()),
-            {"插值与反插值", "平滑显示", "塑性应变对齐", "参考归零"},
+            {"插值与反插值", "平滑显示", "塑性应变对齐", "起点归零 / 基线校正"},
         )
         self.assertTrue(all(not section["body"].winfo_ismapped() for section in self.app.advanced_sections.values()))
 

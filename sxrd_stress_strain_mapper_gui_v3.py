@@ -91,6 +91,9 @@ WIZARD_DONE = "已完成"
 ALIGNMENT_FACTOR_WARN_MIN = 0.5
 ALIGNMENT_FACTOR_WARN_MAX = 2.0
 
+CONTROL_PANEL_WIDTH = 430
+CONTROL_WRAP = 320
+
 
 # -----------------------------
 # Basic data utilities
@@ -699,8 +702,8 @@ class StressStrainMapperApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("SXRD 原位谱线 应力-应变映射工具")
-        self.root.geometry("1200x800")
-        self.root.minsize(1100, 720)
+        self.root.geometry("1366x768")
+        self.root.minsize(1180, 720)
 
         self.ref_df: Optional[pd.DataFrame] = None
         self.station_df: Optional[pd.DataFrame] = None
@@ -749,15 +752,15 @@ class StressStrainMapperApp:
 
     def _build_layout(self):
         self._configure_styles()
-        self.root.geometry("1320x840")
-        self.root.minsize(1180, 760)
+        self.root.geometry("1366x768")
+        self.root.minsize(1180, 720)
 
         shell = ttk.Frame(self.root, style="App.TFrame")
         shell.pack(fill=tk.BOTH, expand=True)
         shell.rowconfigure(1, weight=1)
         shell.columnconfigure(0, weight=1)
 
-        status_bar = ttk.Frame(shell, style="Header.TFrame", padding=(14, 10))
+        status_bar = ttk.Frame(shell, style="Header.TFrame", padding=(16, 9))
         status_bar.grid(row=0, column=0, sticky="ew")
         status_bar.columnconfigure(0, weight=1)
         status_bar.columnconfigure(1, weight=0)
@@ -779,7 +782,7 @@ class StressStrainMapperApp:
         main = ttk.PanedWindow(shell, orient=tk.HORIZONTAL)
         main.grid(row=1, column=0, sticky="nsew", padx=10, pady=(8, 10))
 
-        self.left_panel = ttk.Frame(main, width=420, style="Panel.TFrame")
+        self.left_panel = ttk.Frame(main, width=CONTROL_PANEL_WIDTH, style="Panel.TFrame")
         self.left_panel.grid_propagate(False)
         self.right_panel = ttk.Frame(main, style="Workspace.TFrame")
         main.add(self.left_panel, weight=0)
@@ -789,33 +792,43 @@ class StressStrainMapperApp:
         self._build_visual_area(self.right_panel)
 
     def _configure_styles(self):
-        self.root.configure(bg="#f3f6fb")
+        self.root.configure(bg="#eef3f8")
         style = ttk.Style(self.root)
         try:
             style.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure("App.TFrame", background="#f3f6fb")
-        style.configure("Header.TFrame", background="#eaf1fb")
+        style.configure("App.TFrame", background="#eef3f8")
+        style.configure("Header.TFrame", background="#f8fbff")
         style.configure("Panel.TFrame", background="#f8fafc")
-        style.configure("Workspace.TFrame", background="#f3f6fb")
-        style.configure("AppTitle.TLabel", background="#eaf1fb", foreground="#0f172a", font=("TkDefaultFont", 14, "bold"))
-        style.configure("Muted.TLabel", background="#eaf1fb", foreground="#475569")
-        style.configure("StatusPill.TLabel", background="#dbeafe", foreground="#1d4ed8", padding=(12, 5), font=("TkDefaultFont", 10, "bold"))
-        style.configure("Section.TLabelframe", background="#ffffff", bordercolor="#d7dee8", relief="solid")
+        style.configure("Workspace.TFrame", background="#eef3f8")
+        style.configure("AppTitle.TLabel", background="#f8fbff", foreground="#0f172a", font=("TkDefaultFont", 14, "bold"))
+        style.configure("Muted.TLabel", background="#f8fbff", foreground="#526173")
+        style.configure("StatusPill.TLabel", background="#e6f4ee", foreground="#116149", padding=(12, 5), font=("TkDefaultFont", 10, "bold"))
+        style.configure("Section.TLabelframe", background="#ffffff", bordercolor="#d8e1eb", lightcolor="#d8e1eb", darkcolor="#d8e1eb", relief="solid")
         style.configure("Section.TLabelframe.Label", background="#ffffff", foreground="#0f172a", font=("TkDefaultFont", 10, "bold"))
         style.configure("SectionBody.TFrame", background="#ffffff")
         style.configure("Control.TLabel", background="#ffffff", foreground="#1f2937")
-        style.configure("Hint.TLabel", background="#ffffff", foreground="#64748b")
-        style.configure("BlueHint.TLabel", background="#ffffff", foreground="#24527a")
-        style.configure("Primary.TButton", padding=(10, 8), font=("TkDefaultFont", 10, "bold"))
-        style.configure("Secondary.TButton", padding=(8, 5))
+        style.configure("Hint.TLabel", background="#ffffff", foreground="#667085")
+        style.configure("BlueHint.TLabel", background="#ffffff", foreground="#1f5f85")
+        style.configure("Primary.TButton", padding=(11, 8), font=("TkDefaultFont", 10, "bold"))
+        style.configure("Secondary.TButton", padding=(8, 6))
         style.configure("Tool.TCheckbutton", background="#ffffff", foreground="#1f2937")
+        style.configure("Workspace.TNotebook", background="#eef3f8", borderwidth=0, tabmargins=(4, 4, 4, 0))
+        style.configure("Workspace.TNotebook.Tab", padding=(18, 8), font=("TkDefaultFont", 10, "bold"))
+        style.map(
+            "Workspace.TNotebook.Tab",
+            background=[("selected", "#ffffff"), ("active", "#f8fbff")],
+            foreground=[("selected", "#0f172a"), ("active", "#1f5f85")],
+        )
+        style.configure("Treeview", background="#ffffff", fieldbackground="#ffffff", foreground="#111827", rowheight=26, bordercolor="#d8e1eb")
+        style.configure("Treeview.Heading", background="#eef3f8", foreground="#0f172a", font=("TkDefaultFont", 9, "bold"), padding=(6, 5))
+        style.map("Treeview", background=[("selected", "#dbeafe")], foreground=[("selected", "#0f172a")])
 
     def _build_scrollable_controls(self, parent) -> ttk.Frame:
         parent.rowconfigure(0, weight=1)
         parent.columnconfigure(0, weight=1)
-        self.control_canvas = tk.Canvas(parent, background="#f8fafc", highlightthickness=0, borderwidth=0, width=408)
+        self.control_canvas = tk.Canvas(parent, background="#f8fafc", highlightthickness=0, borderwidth=0, width=CONTROL_PANEL_WIDTH - 14)
         control_scrollbar = ttk.Scrollbar(parent, orient="vertical", command=self.control_canvas.yview)
         self.control_canvas.configure(yscrollcommand=control_scrollbar.set)
         self.control_canvas.grid(row=0, column=0, sticky="nsew")
@@ -836,7 +849,7 @@ class StressStrainMapperApp:
         return body
 
     def _grid_labeled(self, parent, row: int, label: str, widget, pady: int = 2):
-        ttk.Label(parent, text=label, style="Control.TLabel", width=12).grid(row=row, column=0, sticky="w", pady=pady)
+        ttk.Label(parent, text=label, style="Control.TLabel", width=10).grid(row=row, column=0, sticky="w", pady=pady, padx=(0, 8))
         widget.grid(row=row, column=1, sticky="ew", pady=pady)
 
     def _create_collapsible_section(self, parent, row: int, title: str, summary: str) -> ttk.Frame:
@@ -852,7 +865,7 @@ class StressStrainMapperApp:
             style="Tool.TCheckbutton",
         )
         header.grid(row=0, column=0, sticky="ew", padx=6, pady=(4, 2))
-        body = ttk.Frame(container, style="SectionBody.TFrame", padding=(12, 4, 8, 8))
+        body = ttk.Frame(container, style="SectionBody.TFrame", padding=(12, 6, 8, 8))
         body.columnconfigure(1, weight=1)
         self.advanced_sections[title] = {"frame": container, "body": body, "visible": visible, "header": header}
         return body
@@ -870,21 +883,21 @@ class StressStrainMapperApp:
         body = self._build_scrollable_controls(parent)
         body.columnconfigure(0, weight=1)
 
-        ref_box = ttk.LabelFrame(body, text="1 参考曲线", style="Section.TLabelframe", padding=10)
-        st_box = ttk.LabelFrame(body, text="2 线站数据", style="Section.TLabelframe", padding=10)
-        result_box = ttk.LabelFrame(body, text="3 映射运行", style="Section.TLabelframe", padding=10)
+        ref_box = ttk.LabelFrame(body, text="1 参考曲线", style="Section.TLabelframe", padding=(10, 9))
+        st_box = ttk.LabelFrame(body, text="2 线站数据", style="Section.TLabelframe", padding=(10, 9))
+        result_box = ttk.LabelFrame(body, text="3 映射运行", style="Section.TLabelframe", padding=(10, 9))
         ref_box.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         st_box.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         result_box.grid(row=2, column=0, sticky="ew", pady=(0, 8))
 
         # Step 1: reference file
         ref_box.columnconfigure(1, weight=1)
-        ttk.Label(ref_box, text="加载完整参考曲线，确认应变/应力列与单位。", style="Hint.TLabel", wraplength=340).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        ttk.Label(ref_box, text="加载完整参考曲线，确认应变/应力列与单位。", style="Hint.TLabel", wraplength=CONTROL_WRAP).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
         ttk.Button(ref_box, text="加载参考曲线 CSV/TXT/XLSX", command=self.load_reference, style="Secondary.TButton").grid(row=1, column=0, columnspan=2, sticky="ew")
-        self.ref_label = ttk.Label(ref_box, text="未加载", style="Hint.TLabel", wraplength=340)
+        self.ref_label = ttk.Label(ref_box, text="未加载", style="Hint.TLabel", wraplength=CONTROL_WRAP)
         self.ref_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 8))
-        ttk.Label(ref_box, textvariable=self.ref_recommendation, style="BlueHint.TLabel", wraplength=340).grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        ttk.Label(ref_box, textvariable=self.ref_recommendation, style="BlueHint.TLabel", wraplength=CONTROL_WRAP).grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
         self.ref_strain_combo = ttk.Combobox(ref_box, textvariable=self.ref_strain_col, state="readonly", width=26)
         self.ref_stress_combo = ttk.Combobox(ref_box, textvariable=self.ref_stress_col, state="readonly", width=26)
@@ -897,12 +910,12 @@ class StressStrainMapperApp:
 
         # Step 2: station file and recommendation confirmation
         st_box.columnconfigure(1, weight=1)
-        ttk.Label(st_box, text="加载线站数据，检查推荐模式、编号和输入列。", style="Hint.TLabel", wraplength=340).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        ttk.Label(st_box, text="加载线站数据，检查推荐模式、编号和输入列。", style="Hint.TLabel", wraplength=CONTROL_WRAP).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
         ttk.Button(st_box, text="加载线站数据 CSV/TXT/XLSX", command=self.load_station, style="Secondary.TButton").grid(row=1, column=0, columnspan=2, sticky="ew")
-        self.station_label = ttk.Label(st_box, text="未加载", style="Hint.TLabel", wraplength=340)
+        self.station_label = ttk.Label(st_box, text="未加载", style="Hint.TLabel", wraplength=CONTROL_WRAP)
         self.station_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 8))
-        ttk.Label(st_box, textvariable=self.station_recommendation, style="BlueHint.TLabel", wraplength=340).grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        ttk.Label(st_box, textvariable=self.station_recommendation, style="BlueHint.TLabel", wraplength=CONTROL_WRAP).grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
         mode_combo = ttk.Combobox(st_box, textvariable=self.station_mode,
                                   values=[MODE_STRAIN_ONLY, MODE_STRESS_ONLY, MODE_BOTH],
@@ -921,7 +934,7 @@ class StressStrainMapperApp:
         self._grid_labeled(st_box, 8, "应变单位", self.station_strain_unit_combo)
         self._grid_labeled(st_box, 9, "应力单位", self.station_stress_unit_combo)
 
-        self.mode_hint = ttk.Label(st_box, text="", style="Hint.TLabel", wraplength=340)
+        self.mode_hint = ttk.Label(st_box, text="", style="Hint.TLabel", wraplength=CONTROL_WRAP)
         self.mode_hint.grid(row=10, column=0, columnspan=2, sticky="w", pady=(5, 0))
         self.confirm_button = ttk.Button(st_box, text="确认推荐", command=self.confirm_recommendations, style="Secondary.TButton")
         self.confirm_button.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(8, 0))
@@ -941,9 +954,9 @@ class StressStrainMapperApp:
 
         # Step 3: run, quality summary, export
         result_box.columnconfigure(0, weight=1)
-        self.result_status_label = ttk.Label(result_box, textvariable=self.result_status, style="BlueHint.TLabel", wraplength=340)
+        self.result_status_label = ttk.Label(result_box, textvariable=self.result_status, style="BlueHint.TLabel", wraplength=CONTROL_WRAP)
         self.result_status_label.grid(row=0, column=0, sticky="w", pady=(0, 4))
-        ttk.Label(result_box, textvariable=self.result_summary, style="Hint.TLabel", wraplength=340).grid(row=1, column=0, sticky="w", pady=(0, 8))
+        ttk.Label(result_box, textvariable=self.result_summary, style="Hint.TLabel", wraplength=CONTROL_WRAP).grid(row=1, column=0, sticky="w", pady=(0, 8))
 
         self.run_button = ttk.Button(result_box, text="运行映射 / 更新图", command=self.run_mapping, style="Primary.TButton")
         self.run_button.grid(row=2, column=0, sticky="ew", pady=(2, 5))
@@ -960,7 +973,7 @@ class StressStrainMapperApp:
             style="Tool.TCheckbutton",
         ).grid(row=5, column=0, sticky="w", pady=(8, 4))
 
-        self.advanced_frame = ttk.LabelFrame(body, text="高级设置", style="Section.TLabelframe", padding=8)
+        self.advanced_frame = ttk.LabelFrame(body, text="高级设置", style="Section.TLabelframe", padding=(8, 7))
         self.advanced_frame.columnconfigure(0, weight=1)
         opt_box = self.advanced_frame
         self.advanced_sections = {}
@@ -978,7 +991,7 @@ class StressStrainMapperApp:
         ttk.Checkbutton(interp_body, text="应力→应变时自动删除非单调应力下降点", variable=self.inverse_monotonic, style="Tool.TCheckbutton").grid(row=2, column=0, columnspan=2, sticky="w", pady=2)
 
         method_note = "PCHIP 可用" if SCIPY_AVAILABLE else "未检测到 scipy：PCHIP 会自动降级为线性插值"
-        ttk.Label(interp_body, text=method_note, style="Hint.TLabel", wraplength=320).grid(row=3, column=0, columnspan=2, sticky="w", pady=(5, 0))
+        ttk.Label(interp_body, text=method_note, style="Hint.TLabel", wraplength=CONTROL_WRAP - 10).grid(row=3, column=0, columnspan=2, sticky="w", pady=(5, 0))
 
         view_box = self._create_collapsible_section(opt_box, 1, "平滑显示", "原始点；可选 smooth_* 辅助列")
         view_box.columnconfigure(1, weight=1)
@@ -1004,7 +1017,7 @@ class StressStrainMapperApp:
             view_box,
             text="说明：平滑默认只作为视觉辅助，并新增 smooth_* 列；不会覆盖原始 mapped_* 数据。",
             style="Hint.TLabel",
-            wraplength=320,
+            wraplength=CONTROL_WRAP - 10,
         ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(5, 0))
 
         align_box = self._create_collapsible_section(opt_box, 2, "塑性应变对齐", "最大值比例缩放；保留审计列")
@@ -1021,7 +1034,7 @@ class StressStrainMapperApp:
             align_box,
             textvariable=self.strain_alignment_hint,
             style="Hint.TLabel",
-            wraplength=320,
+            wraplength=CONTROL_WRAP - 10,
         ).grid(row=1, column=0, sticky="w", pady=(4, 0))
 
         ref_option_box = self._create_collapsible_section(opt_box, 3, "起点归零 / 基线校正", "参考和线站都减去首个有效点")
@@ -1037,19 +1050,26 @@ class StressStrainMapperApp:
         self._update_wizard_state_display()
 
     def _build_visual_area(self, parent):
-        parent.rowconfigure(0, weight=3)
-        parent.rowconfigure(1, weight=1)
+        parent.rowconfigure(0, weight=1)
         parent.columnconfigure(0, weight=1)
 
-        self.plot_frame = ttk.LabelFrame(parent, text="曲线视图", style="Section.TLabelframe", padding=6)
+        self.detail_notebook = ttk.Notebook(parent, style="Workspace.TNotebook")
+        self.detail_notebook.grid(row=0, column=0, sticky="nsew")
+
+        plot_tab = ttk.Frame(self.detail_notebook, style="Workspace.TFrame", padding=(8, 8, 8, 8))
+        plot_tab.rowconfigure(0, weight=1)
+        plot_tab.columnconfigure(0, weight=1)
+        self.detail_notebook.add(plot_tab, text="曲线视图")
+
+        self.plot_frame = ttk.LabelFrame(plot_tab, text="参考曲线与映射结果", style="Section.TLabelframe", padding=8)
         self.plot_frame.grid(row=0, column=0, sticky="nsew")
         self.plot_frame.rowconfigure(0, weight=1)
         self.plot_frame.columnconfigure(0, weight=1)
 
-        self.fig = Figure(figsize=(8.5, 5.8), dpi=100)
+        self.fig = Figure(figsize=(8.6, 5.2), dpi=100, facecolor="#ffffff")
         self.ax_curve = self.fig.add_subplot(211)
         self.ax_series = self.fig.add_subplot(212)
-        self.fig.tight_layout(pad=2.0)
+        self.fig.tight_layout(pad=2.2)
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
         self.canvas.draw()
@@ -1059,10 +1079,7 @@ class StressStrainMapperApp:
         toolbar.update()
         toolbar.grid(row=1, column=0, sticky="ew")
 
-        self.detail_notebook = ttk.Notebook(parent)
-        self.detail_notebook.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
-
-        table_box = ttk.Frame(self.detail_notebook, padding=6)
+        table_box = ttk.Frame(self.detail_notebook, style="Workspace.TFrame", padding=(8, 8, 8, 8))
         table_box.rowconfigure(0, weight=1)
         table_box.columnconfigure(0, weight=1)
         self.detail_notebook.add(table_box, text="结果表")
@@ -1075,11 +1092,22 @@ class StressStrainMapperApp:
         yscroll.grid(row=0, column=1, sticky="ns")
         xscroll.grid(row=1, column=0, sticky="ew")
 
-        log_box = ttk.Frame(self.detail_notebook, padding=6)
+        log_box = ttk.Frame(self.detail_notebook, style="Workspace.TFrame", padding=(8, 8, 8, 8))
         log_box.rowconfigure(0, weight=1)
         log_box.columnconfigure(0, weight=1)
         self.detail_notebook.add(log_box, text="问题日志")
-        self.log_text = tk.Text(log_box, height=8, wrap="word", relief="flat", background="#ffffff", foreground="#0f172a")
+        self.log_text = tk.Text(
+            log_box,
+            height=8,
+            wrap="word",
+            relief="flat",
+            background="#ffffff",
+            foreground="#0f172a",
+            padx=10,
+            pady=8,
+            spacing1=2,
+            spacing3=4,
+        )
         log_scroll = ttk.Scrollbar(log_box, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=log_scroll.set)
         self.log_text.grid(row=0, column=0, sticky="nsew")
@@ -1799,6 +1827,7 @@ class StressStrainMapperApp:
 
     def _update_plot(self, ref_clean: pd.DataFrame, result: pd.DataFrame):
         self.fig.clear()
+        self.fig.patch.set_facecolor("#ffffff")
         self.ax_curve = self.fig.add_subplot(211)
         self.ax_series = self.fig.add_subplot(212)
 
@@ -1812,8 +1841,8 @@ class StressStrainMapperApp:
         self.ax_curve.plot(
             ref_clean["strain_fraction"] * 100.0,
             ref_clean["stress_MPa"],
-            color="#333333",
-            linewidth=2.0,
+            color="#1f2937",
+            linewidth=2.2,
             alpha=0.85,
             label="Reference curve",
             zorder=1,
@@ -1825,8 +1854,8 @@ class StressStrainMapperApp:
                 s=34,
                 marker="o",
                 facecolors="none",
-                edgecolors="#d62728",
-                linewidths=1.2,
+                edgecolors="#c2410c",
+                linewidths=1.25,
                 label="Mapped raw points",
                 zorder=3,
             )
@@ -1835,7 +1864,7 @@ class StressStrainMapperApp:
             self.ax_curve.plot(
                 result.loc[smooth_ok, "smooth_mapped_strain_percent"],
                 result.loc[smooth_ok, "smooth_mapped_stress_MPa"],
-                color="#ff7f0e",
+                color="#0f766e",
                 linewidth=2.0,
                 label="Smoothed guide",
                 zorder=2,
@@ -1846,16 +1875,16 @@ class StressStrainMapperApp:
                 result.loc[invalid, "mapped_stress_MPa"],
                 s=40,
                 marker="x",
-                color="#9467bd",
+                color="#7c3aed",
                 label="Invalid / out of range",
                 zorder=4,
             )
 
         self.ax_curve.set_xlabel("Engineering strain / %")
         self.ax_curve.set_ylabel("Engineering stress / MPa")
-        self.ax_curve.set_title("Reference curve + mapped in-situ points")
-        self.ax_curve.grid(True, alpha=0.22)
-        self.ax_curve.legend(loc="best")
+        self.ax_curve.set_title("Reference curve + mapped in-situ points", fontsize=11, fontweight="bold", color="#0f172a")
+        self.ax_curve.grid(True, color="#d9e2ec", linewidth=0.8, alpha=0.85)
+        self.ax_curve.legend(loc="best", frameon=True, framealpha=0.92, fontsize=8)
 
         # Unit sanity annotation: useful when percent/fraction is selected incorrectly.
         try:
@@ -1894,7 +1923,7 @@ class StressStrainMapperApp:
                 marker="o",
                 markersize=3.8,
                 linewidth=1.0,
-                color="#1f77b4",
+                color="#2563eb",
                 alpha=0.85,
                 label="Stress raw / MPa",
             )
@@ -1903,12 +1932,12 @@ class StressStrainMapperApp:
                 x,
                 result["smooth_mapped_stress_MPa"],
                 linewidth=2.0,
-                color="#d62728",
+                color="#c2410c",
                 label="Stress smoothed / MPa",
             )
         self.ax_series.set_xlabel(xlabel)
         self.ax_series.set_ylabel("Stress / MPa")
-        self.ax_series.grid(True, alpha=0.22)
+        self.ax_series.grid(True, color="#d9e2ec", linewidth=0.8, alpha=0.85)
 
         ax2 = self.ax_series.twinx()
         if use_raw:
@@ -1919,7 +1948,7 @@ class StressStrainMapperApp:
                 markersize=3.4,
                 linewidth=1.0,
                 linestyle="--",
-                color="#2ca02c",
+                color="#047857",
                 alpha=0.78,
                 label="Strain raw / %",
             )
@@ -1929,17 +1958,25 @@ class StressStrainMapperApp:
                 result["smooth_mapped_strain_percent"],
                 linewidth=1.8,
                 linestyle="--",
-                color="#ff7f0e",
+                color="#0f766e",
                 label="Strain smoothed / %",
             )
         ax2.set_ylabel("Strain / %")
 
         lines1, labels1 = self.ax_series.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
-        self.ax_series.legend(lines1 + lines2, labels1 + labels2, loc="best")
-        self.ax_series.set_title("Mapped stress and strain vs spectrum/frame order")
+        self.ax_series.legend(lines1 + lines2, labels1 + labels2, loc="best", frameon=True, framealpha=0.92, fontsize=8)
+        self.ax_series.set_title("Mapped stress and strain vs spectrum/frame order", fontsize=11, fontweight="bold", color="#0f172a")
 
-        self.fig.tight_layout(pad=2.0)
+        for axis in (self.ax_curve, self.ax_series, ax2):
+            axis.set_facecolor("#ffffff")
+            axis.tick_params(colors="#334155", labelsize=9)
+            axis.xaxis.label.set_color("#334155")
+            axis.yaxis.label.set_color("#334155")
+            for spine in axis.spines.values():
+                spine.set_color("#cbd5e1")
+
+        self.fig.tight_layout(pad=2.2, h_pad=2.4)
         self.canvas.draw()
 
     def _update_table(self, df: pd.DataFrame):
@@ -1995,9 +2032,18 @@ class StressStrainMapperApp:
         self.tree["columns"] = cols
         for col in cols:
             self.tree.heading(col, text=col)
-            self.tree.column(col, width=140, anchor="center")
+            width = 120
+            if col in {"spectrum_id", "input_type", "interpolation"}:
+                width = 110
+            elif col.startswith("mapped_") or col.startswith("smooth_"):
+                width = 150
+            elif "offset" in col or "alignment" in col or "duplicate" in col or "inverse" in col:
+                width = 180
+            self.tree.column(col, width=width, minwidth=90, anchor="center", stretch=True)
+        self.tree.tag_configure("odd", background="#f8fafc")
+        self.tree.tag_configure("even", background="#ffffff")
 
-        for _, row in preview.iterrows():
+        for row_index, (_, row) in enumerate(preview.iterrows()):
             vals = []
             for col in cols:
                 val = row[col]
@@ -2008,7 +2054,8 @@ class StressStrainMapperApp:
                         vals.append("NaN")
                 else:
                     vals.append(str(val))
-            self.tree.insert("", tk.END, values=vals)
+            tag = "odd" if row_index % 2 else "even"
+            self.tree.insert("", tk.END, values=vals, tags=(tag,))
 
     @staticmethod
     def _build_export_dataframe(df: pd.DataFrame) -> pd.DataFrame:

@@ -556,6 +556,37 @@ class StressStrainMapperGuiRegressionTest(unittest.TestCase):
         self.assertIn("结果表", [self.app.detail_notebook.tab(i, "text") for i in self.app.detail_notebook.tabs()])
         self.assertIn("问题日志", [self.app.detail_notebook.tab(i, "text") for i in self.app.detail_notebook.tabs()])
 
+    def test_workspace_tabs_are_full_height_at_research_laptop_size(self):
+        self.root.geometry("1366x768")
+        self.root.update_idletasks()
+        self.root.update()
+
+        tab_labels = [self.app.detail_notebook.tab(i, "text") for i in self.app.detail_notebook.tabs()]
+        self.assertIn("曲线视图", tab_labels)
+        self.assertIn("结果表", tab_labels)
+        self.assertIn("问题日志", tab_labels)
+        self.assertLessEqual(self.app.left_panel.winfo_width(), 430)
+        self.assertGreaterEqual(self.app.detail_notebook.winfo_height(), 640)
+
+        self.app.detail_notebook.select(tab_labels.index("曲线视图"))
+        self.root.update_idletasks()
+        self.root.update()
+        self.assertTrue(self.app.plot_frame.winfo_ismapped())
+        self.assertGreaterEqual(self.app.plot_frame.winfo_width(), 880)
+        self.assertGreaterEqual(self.app.plot_frame.winfo_height(), 600)
+
+        self.app.detail_notebook.select(tab_labels.index("结果表"))
+        self.root.update_idletasks()
+        self.root.update()
+        self.assertTrue(self.app.tree.winfo_ismapped())
+        self.assertGreaterEqual(self.app.tree.winfo_height(), 560)
+
+        self.app.detail_notebook.select(tab_labels.index("问题日志"))
+        self.root.update_idletasks()
+        self.root.update()
+        self.assertTrue(self.app.log_text.winfo_ismapped())
+        self.assertGreaterEqual(self.app.log_text.winfo_height(), 560)
+
     def test_advanced_settings_are_collapsed_by_default_and_scrollable(self):
         self.root.geometry("1280x800")
         self.root.update_idletasks()

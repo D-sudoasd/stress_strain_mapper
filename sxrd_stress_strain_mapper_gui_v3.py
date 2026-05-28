@@ -464,6 +464,14 @@ def _positive_finite_max(values, label: str) -> float:
     return float(np.nanmax(finite_positive))
 
 
+def _positive_finite_max_for_alignment(values, label: str, quantity: str) -> float:
+    arr = np.asarray(values, dtype=float)
+    finite_positive = arr[np.isfinite(arr) & (arr > 0)]
+    if finite_positive.size == 0:
+        raise ValueError(f"{label}缺少有效正{quantity}。")
+    return float(np.nanmax(finite_positive))
+
+
 def compute_strain_alignment_diagnostics(ref_eps_fraction, station_eps_fraction) -> dict:
     """Compute max-strain alignment diagnostics using finite positive strain only."""
     try:
@@ -492,6 +500,34 @@ def apply_strain_alignment(station_eps_fraction, diagnostics: dict) -> np.ndarra
     """Scale station strain by a precomputed max-strain alignment factor."""
     factor = float(diagnostics["factor"])
     return np.asarray(station_eps_fraction, dtype=float) * factor
+
+
+def compute_stress_alignment_diagnostics(ref_stress_mpa, station_stress_mpa) -> dict:
+    """Compute max-stress alignment diagnostics using finite positive stress only."""
+    try:
+        ref_max = _positive_finite_max_for_alignment(ref_stress_mpa, "参考曲线", "应力")
+        station_max = _positive_finite_max_for_alignment(station_stress_mpa, "线站数据", "应力")
+    except ValueError as exc:
+        raise ValueError(f"无法计算应力对齐系数：{exc}") from exc
+
+    factor = ref_max / station_max
+    warning = ""
+    if factor < ALIGNMENT_FACTOR_WARN_MIN or factor > ALIGNMENT_FACTOR_WARN_MAX:
+        warning = (
+            "对齐系数超出常见范围，请检查单位、列选择和实验阶段是否一致。"
+        )
+    return {
+        "factor": float(factor),
+        "reference_max_stress_MPa": ref_max,
+        "station_max_stress_MPa": station_max,
+        "warning": warning,
+    }
+
+
+def apply_stress_alignment(station_stress_mpa, diagnostics: dict) -> np.ndarray:
+    """Scale station stress by a precomputed max-stress alignment factor."""
+    factor = float(diagnostics["factor"])
+    return np.asarray(station_stress_mpa, dtype=float) * factor
 
 
 def _average_duplicate_x(tmp: pd.DataFrame) -> Tuple[pd.DataFrame, dict]:
@@ -740,6 +776,7 @@ class StressStrainMapperApp:
         self.show_raw_points = tk.BooleanVar(value=True)
         self.show_smoothed = tk.BooleanVar(value=False)
         self.align_strain_max_to_reference = tk.BooleanVar(value=False)
+        self.align_stress_max_to_reference = tk.BooleanVar(value=False)
 
         self.recommendation_confirmed = tk.BooleanVar(value=False)
         self.advanced_visible = tk.BooleanVar(value=False)
@@ -747,6 +784,7 @@ class StressStrainMapperApp:
         self.ref_recommendation = tk.StringVar(value="加载参考曲线后，程序会自动推荐应变列、应力列和单位。")
         self.station_recommendation = tk.StringVar(value="加载线站数据后，程序会自动推荐映射方向、输入列和单位。")
         self.strain_alignment_hint = tk.StringVar(value="加载参考曲线和线站应变后，将显示最大塑性应变对齐建议。")
+        self.stress_alignment_hint = tk.StringVar(value="加载参考曲线和线站应力后，将显示最大应力对齐建议。")
         self.result_status = tk.StringVar(value="等待加载数据。")
         self.result_summary = tk.StringVar(value="确认推荐并运行后，这里会显示有效行数、超范围行数和导出提示。")
 
@@ -1020,7 +1058,7 @@ class StressStrainMapperApp:
             wraplength=CONTROL_WRAP - 10,
         ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(5, 0))
 
-        align_box = self._create_collapsible_section(opt_box, 2, "塑性应变对齐", "最大值比例缩放；保留审计列")
+        align_box = self._create_collapsible_section(opt_box, 2, "应变 / 应力对齐", "最大值比例缩放；保留审计列")
         align_box.columnconfigure(0, weight=1)
         self.align_strain_check = ttk.Checkbutton(
             align_box,
@@ -1036,6 +1074,20 @@ class StressStrainMapperApp:
             style="Hint.TLabel",
             wraplength=CONTROL_WRAP - 10,
         ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self.align_stress_check = ttk.Checkbutton(
+            align_box,
+            text="将线站最大应力缩放到参考曲线最大应力",
+            variable=self.align_stress_max_to_reference,
+            command=self._on_alignment_option_changed,
+            style="Tool.TCheckbutton",
+        )
+        self.align_stress_check.grid(row=2, column=0, sticky="w", pady=(8, 2))
+        ttk.Label(
+            align_box,
+            textvariable=self.stress_alignment_hint,
+            style="Hint.TLabel",
+            wraplength=CONTROL_WRAP - 10,
+        ).grid(row=3, column=0, sticky="w", pady=(4, 0))
 
         ref_option_box = self._create_collapsible_section(opt_box, 3, "起点归零 / 基线校正", "参考和线站都减去首个有效点")
         ttk.Checkbutton(
@@ -1148,10 +1200,12 @@ class StressStrainMapperApp:
             self._set_result_status("推荐已修改，请重新确认后再运行。", "#8a6d1d")
             self.result_summary.set("列、单位或模式已改变；旧结果已失效。")
             self._update_strain_alignment_hint()
+            self._update_stress_alignment_hint()
             self._update_wizard_state_display()
 
     def _on_alignment_option_changed(self):
         self._update_strain_alignment_hint()
+        self._update_stress_alignment_hint()
         if self.result_df is not None:
             self._clear_result_preview()
             self._set_result_status("高级设置已修改，请重新运行映射。", "#8a6d1d")
@@ -1177,6 +1231,28 @@ class StressStrainMapperApp:
         if self.zero_reference.get():
             eps, _ = zero_to_first_finite(eps)
         return eps
+
+    def _reference_stress_for_alignment(self) -> np.ndarray:
+        if self.ref_df is None:
+            raise ValueError("请先加载参考曲线。")
+        sig_raw = to_numeric_series(self.ref_df, self.ref_stress_col.get(), "参考应力")
+        sig = convert_stress_to_mpa(sig_raw, self.ref_stress_unit.get())
+        tmp = pd.Series(sig).replace([np.inf, -np.inf], np.nan).dropna()
+        if self.zero_reference.get() and len(tmp) > 0:
+            tmp, _ = zero_to_first_finite(tmp.to_numpy(dtype=float))
+            tmp = pd.Series(tmp).replace([np.inf, -np.inf], np.nan).dropna().sort_values()
+        else:
+            tmp = tmp.sort_values()
+        return tmp.to_numpy(dtype=float)
+
+    def _station_stress_for_alignment(self) -> np.ndarray:
+        if self.station_df is None:
+            raise ValueError("请先加载线站数据。")
+        sig_raw = to_numeric_series(self.station_df, self.station_stress_col.get(), "线站应力")
+        sig = convert_stress_to_mpa(sig_raw, self.station_stress_unit.get())
+        if self.zero_reference.get():
+            sig, _ = zero_to_first_finite(sig)
+        return sig
 
     def _update_strain_alignment_hint(self):
         if not hasattr(self, "strain_alignment_hint"):
@@ -1206,6 +1282,35 @@ class StressStrainMapperApp:
             self.strain_alignment_hint.set(hint)
         except Exception as exc:
             self.strain_alignment_hint.set(f"暂不能计算对齐建议：{exc}")
+
+    def _update_stress_alignment_hint(self):
+        if not hasattr(self, "stress_alignment_hint"):
+            return
+        if self.station_mode.get() == MODE_STRAIN_ONLY:
+            self.stress_alignment_hint.set("当前为应变→应力插值模式，没有线站应力列；最大应力对齐不会应用。")
+            if hasattr(self, "align_stress_check"):
+                self.align_stress_check.config(state="disabled")
+            return
+        if hasattr(self, "align_stress_check"):
+            self.align_stress_check.config(state="normal")
+        if self.ref_df is None or self.station_df is None:
+            self.stress_alignment_hint.set("加载参考曲线和线站应力后，将显示最大应力对齐建议。")
+            return
+        try:
+            diag = compute_stress_alignment_diagnostics(
+                self._reference_stress_for_alignment(),
+                self._station_stress_for_alignment(),
+            )
+            hint = (
+                f"建议系数 = {diag['factor']:.6g}；"
+                f"参考最大 {diag['reference_max_stress_MPa']:.4g} MPa，"
+                f"线站最大 {diag['station_max_stress_MPa']:.4g} MPa。"
+            )
+            if diag["warning"]:
+                hint += " " + diag["warning"]
+            self.stress_alignment_hint.set(hint)
+        except Exception as exc:
+            self.stress_alignment_hint.set(f"暂不能计算对齐建议：{exc}")
 
     def _update_wizard_state_display(self):
         state = get_wizard_state(
@@ -1299,6 +1404,7 @@ class StressStrainMapperApp:
         if hasattr(self, "station_stress_unit_combo"):
             self.station_stress_unit_combo.config(state=stress_state)
         self._update_strain_alignment_hint()
+        self._update_stress_alignment_hint()
 
     def load_reference(self):
         path = filedialog.askopenfilename(
@@ -1328,6 +1434,7 @@ class StressStrainMapperApp:
             self.log(f"已加载参考曲线：{path}")
             self.log(f"参考推荐：应变={rec['strain_col']} ({rec['strain_unit']})；应力={rec['stress_col']} ({rec['stress_unit']})")
             self._update_strain_alignment_hint()
+            self._update_stress_alignment_hint()
             self._update_wizard_state_display()
             if hasattr(self, "wizard"):
                 self.wizard.select(1)
@@ -1368,6 +1475,7 @@ class StressStrainMapperApp:
             self.log(f"已加载线站数据：{path}")
             self.log(f"线站推荐：{rec['mode']}；编号={rec['id_col'] or '行号'}；应变={rec['strain_col'] or '无'}；应力={rec['stress_col'] or '无'}")
             self._update_strain_alignment_hint()
+            self._update_stress_alignment_hint()
             self._update_wizard_state_display()
         except Exception as exc:
             messagebox.showerror("读取线站数据失败", str(exc))
@@ -1556,6 +1664,58 @@ class StressStrainMapperApp:
         for col, value in audit.items():
             result[col] = value
 
+    def _build_stress_alignment_payload(
+        self,
+        sig_ref: np.ndarray,
+        raw_station_sig: np.ndarray,
+        zeroed_station_sig: np.ndarray,
+        enabled: bool,
+    ) -> Tuple[np.ndarray, dict]:
+        raw_station_sig = np.asarray(raw_station_sig, dtype=float)
+        zeroed_station_sig = np.asarray(zeroed_station_sig, dtype=float)
+        try:
+            diag = compute_stress_alignment_diagnostics(sig_ref, zeroed_station_sig)
+        except ValueError:
+            if enabled:
+                raise
+            diag = {
+                "factor": np.nan,
+                "reference_max_stress_MPa": np.nan,
+                "station_max_stress_MPa": np.nan,
+                "warning": "",
+            }
+
+        if enabled:
+            aligned = apply_stress_alignment(zeroed_station_sig, diag)
+            applied_factor = float(diag["factor"])
+            self.log(
+                "已启用应力最大值对齐："
+                f"参考最大 {diag['reference_max_stress_MPa']:.4g} MPa，"
+                f"线站最大 {diag['station_max_stress_MPa']:.4g} MPa，"
+                f"系数 {applied_factor:.6g}。"
+            )
+            if diag["warning"]:
+                self.log("⚠️ 应力对齐：" + diag["warning"])
+        else:
+            aligned = zeroed_station_sig
+            applied_factor = 1.0
+
+        audit = {
+            "raw_station_stress_MPa": raw_station_sig,
+            "zeroed_station_stress_MPa": zeroed_station_sig,
+            "aligned_station_stress_MPa": aligned,
+            "stress_alignment_factor": applied_factor,
+            "stress_alignment_applied": bool(enabled),
+            "reference_max_stress_MPa": diag["reference_max_stress_MPa"],
+            "station_max_stress_MPa": diag["station_max_stress_MPa"],
+        }
+        return aligned, audit
+
+    @staticmethod
+    def _add_stress_alignment_audit_columns(result: pd.DataFrame, audit: dict) -> None:
+        for col, value in audit.items():
+            result[col] = value
+
     def _apply_start_zeroing(self, values) -> Tuple[np.ndarray, float]:
         arr = np.asarray(values, dtype=float)
         if self.zero_reference.get():
@@ -1677,6 +1837,12 @@ class StressStrainMapperApp:
                         f"归零后范围 {np.nanmin(sig_station_zeroed):.4g} 到 {np.nanmax(sig_station_zeroed):.4g} MPa。"
                     )
 
+                sig_for_mapping, stress_alignment_audit = self._build_stress_alignment_payload(
+                    sig_ref,
+                    sig_station,
+                    sig_station_zeroed,
+                    enabled=bool(self.align_stress_max_to_reference.get()),
+                )
                 inv_branch, inverse_diag = build_inverse_branch_with_diagnostics(
                     eps_ref,
                     sig_ref,
@@ -1684,12 +1850,12 @@ class StressStrainMapperApp:
                     monotonicize=self.inverse_monotonic.get(),
                 )
                 f, xmin, xmax, method_used = make_interpolator(inv_branch["stress"], inv_branch["eps"], method=method)
-                eps_mapped = f(sig_station_zeroed)
-                in_range = (sig_station_zeroed >= xmin) & (sig_station_zeroed <= xmax)
+                eps_mapped = f(sig_for_mapping)
+                in_range = (sig_for_mapping >= xmin) & (sig_for_mapping <= xmax)
                 intervals = compute_inverse_strain_intervals(
                     eps_ref,
                     sig_ref,
-                    sig_station_zeroed,
+                    sig_for_mapping,
                     use_pre_peak=self.inverse_pre_peak.get(),
                 )
 
@@ -1698,9 +1864,8 @@ class StressStrainMapperApp:
                     reference_zero_audit,
                     station_stress_offset=station_stress_offset,
                 )
-                result["raw_station_stress_MPa"] = sig_station
-                result["zeroed_station_stress_MPa"] = sig_station_zeroed
-                result["mapped_stress_MPa"] = sig_station_zeroed
+                self._add_stress_alignment_audit_columns(result, stress_alignment_audit)
+                result["mapped_stress_MPa"] = sig_for_mapping
                 result["mapped_strain_fraction"] = eps_mapped
                 result["mapped_strain_percent"] = eps_mapped * 100.0
                 for col in intervals.columns:
@@ -1744,6 +1909,12 @@ class StressStrainMapperApp:
                     eps_station_zeroed,
                     enabled=bool(self.align_strain_max_to_reference.get()),
                 )
+                sig_for_mapping, stress_alignment_audit = self._build_stress_alignment_payload(
+                    sig_ref,
+                    sig_station,
+                    sig_station_zeroed,
+                    enabled=bool(self.align_stress_max_to_reference.get()),
+                )
                 self._add_start_zero_audit_columns(
                     result,
                     reference_zero_audit,
@@ -1751,15 +1922,14 @@ class StressStrainMapperApp:
                     station_stress_offset=station_stress_offset,
                 )
                 self._add_strain_alignment_audit_columns(result, alignment_audit)
-                result["raw_station_stress_MPa"] = sig_station
-                result["zeroed_station_stress_MPa"] = sig_station_zeroed
+                self._add_stress_alignment_audit_columns(result, stress_alignment_audit)
                 result["mapped_strain_fraction"] = eps_for_mapping
                 result["mapped_strain_percent"] = eps_for_mapping * 100.0
-                result["mapped_stress_MPa"] = sig_station_zeroed
+                result["mapped_stress_MPa"] = sig_for_mapping
                 result["input_type"] = "both"
                 result["input_column"] = f"strain={strain_col}; stress={stress_col}"
                 result["interpolation"] = "none / unit conversion only"
-                result["within_reference_range"] = within_reference_ranges(eps_for_mapping, sig_station_zeroed, eps_ref, sig_ref)
+                result["within_reference_range"] = within_reference_ranges(eps_for_mapping, sig_for_mapping, eps_ref, sig_ref)
                 self.log("线站数据已有应力和应变：已完成单位换算、整合和可视化。")
             else:
                 raise ValueError("未知模式。")
@@ -2001,10 +2171,15 @@ class StressStrainMapperApp:
             "aligned_station_strain_percent",
             "raw_station_stress_MPa",
             "zeroed_station_stress_MPa",
+            "aligned_station_stress_MPa",
             "strain_alignment_factor",
             "strain_alignment_applied",
             "reference_max_strain_percent",
             "station_max_strain_percent",
+            "stress_alignment_factor",
+            "stress_alignment_applied",
+            "reference_max_stress_MPa",
+            "station_max_stress_MPa",
             "smooth_mapped_stress_MPa",
             "smooth_mapped_strain_percent",
             "within_reference_range",

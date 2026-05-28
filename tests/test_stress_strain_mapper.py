@@ -62,6 +62,27 @@ class StressStrainMapperNumericsTest(unittest.TestCase):
                 station_eps_fraction=[0.0, np.nan, -0.01],
             )
 
+    def test_stress_alignment_scales_station_900_mpa_to_reference_1000_mpa(self):
+        diag = mapper.compute_stress_alignment_diagnostics(
+            ref_stress_mpa=[0.0, 500.0, 1000.0],
+            station_stress_mpa=[0.0, 450.0, 900.0],
+        )
+
+        self.assertAlmostEqual(diag["factor"], 1000.0 / 900.0)
+        self.assertAlmostEqual(diag["reference_max_stress_MPa"], 1000.0)
+        self.assertAlmostEqual(diag["station_max_stress_MPa"], 900.0)
+        np.testing.assert_allclose(
+            mapper.apply_stress_alignment([0.0, 450.0, 900.0], diag),
+            [0.0, 500.0, 1000.0],
+        )
+
+    def test_stress_alignment_requires_positive_reference_and_station_stress(self):
+        with self.assertRaisesRegex(ValueError, "无法计算应力对齐系数"):
+            mapper.compute_stress_alignment_diagnostics(
+                ref_stress_mpa=[0.0, 1000.0],
+                station_stress_mpa=[0.0, np.nan, -5.0],
+            )
+
     def test_both_mode_range_requires_strain_and_stress_inside_reference(self):
         result = mapper.within_reference_ranges(
             eps_fraction=np.array([0.05, 0.25, 0.10, np.nan]),
@@ -390,6 +411,55 @@ class StressStrainMapperGuiRegressionTest(unittest.TestCase):
         self.assertAlmostEqual(row["mapped_stress_MPa"], 1000.0)
         self.assertTrue(bool(row["within_reference_range"]))
 
+    def test_stress_alignment_can_run_without_strain_alignment_in_stress_only_mode(self):
+        self._configure_stress_mapping()
+        self.app.interp_method.set(mapper.METHOD_LINEAR)
+        self.app.align_strain_max_to_reference.set(False)
+        self.app.align_stress_max_to_reference.set(True)
+        self.app._update_station_mode_hint()
+        self.root.update()
+
+        self.assertEqual(str(self.app.align_strain_check.cget("state")), "disabled")
+        self.assertEqual(str(self.app.align_stress_check.cget("state")), "normal")
+
+        self.app.run_mapping()
+        self.root.update()
+
+        self.assertFalse([msg for msg in self.messages if msg[0] == "error"])
+        row = self.app.result_df.iloc[-1]
+        self.assertFalse("strain_alignment_applied" in self.app.result_df.columns)
+        self.assertTrue(bool(row["stress_alignment_applied"]))
+        self.assertAlmostEqual(row["stress_alignment_factor"], 330.0 / 210.0)
+        self.assertAlmostEqual(row["zeroed_station_stress_MPa"], 210.0)
+        self.assertAlmostEqual(row["aligned_station_stress_MPa"], 330.0)
+        self.assertAlmostEqual(row["mapped_stress_MPa"], 330.0)
+        self.assertAlmostEqual(row["mapped_strain_fraction"], 0.03)
+
+    def test_both_mode_supports_independent_strain_and_stress_alignment_combinations(self):
+        cases = [
+            (False, False, 0.02, 210.0, False, False),
+            (True, False, 0.03, 210.0, True, False),
+            (False, True, 0.02, 330.0, False, True),
+            (True, True, 0.03, 330.0, True, True),
+        ]
+
+        for align_strain, align_stress, expected_eps, expected_sig, strain_applied, stress_applied in cases:
+            with self.subTest(align_strain=align_strain, align_stress=align_stress):
+                self._configure_both_mapping()
+                self.app.align_strain_max_to_reference.set(align_strain)
+                self.app.align_stress_max_to_reference.set(align_stress)
+
+                self.app.run_mapping()
+                self.root.update()
+
+                self.assertFalse([msg for msg in self.messages if msg[0] == "error"])
+                row = self.app.result_df.iloc[-1]
+                self.assertEqual(bool(row["strain_alignment_applied"]), strain_applied)
+                self.assertEqual(bool(row["stress_alignment_applied"]), stress_applied)
+                self.assertAlmostEqual(row["mapped_strain_fraction"], expected_eps)
+                self.assertAlmostEqual(row["mapped_stress_MPa"], expected_sig)
+                self.messages.clear()
+
     def test_start_zeroing_runs_before_strain_alignment_and_interpolation(self):
         self.app.ref_df = pd.DataFrame(
             {
@@ -506,6 +576,7 @@ class StressStrainMapperGuiRegressionTest(unittest.TestCase):
             "aligned_station_strain_fraction",
             "raw_station_stress_MPa",
             "zeroed_station_stress_MPa",
+            "aligned_station_stress_MPa",
         ]:
             self.assertIn(col, export_df.columns)
         self.assertAlmostEqual(row["raw_station_strain_fraction"], 0.06)
@@ -513,6 +584,7 @@ class StressStrainMapperGuiRegressionTest(unittest.TestCase):
         self.assertAlmostEqual(row["aligned_station_strain_fraction"], 0.05)
         self.assertAlmostEqual(row["raw_station_stress_MPa"], 520.0)
         self.assertAlmostEqual(row["zeroed_station_stress_MPa"], 500.0)
+        self.assertAlmostEqual(row["aligned_station_stress_MPa"], 500.0)
         self.assertAlmostEqual(row["mapped_strain_fraction"], 0.05)
         self.assertAlmostEqual(row["mapped_stress_MPa"], 500.0)
 
@@ -598,7 +670,7 @@ class StressStrainMapperGuiRegressionTest(unittest.TestCase):
         self.assertFalse(self.app.advanced_frame.winfo_ismapped())
         self.assertGreaterEqual(
             set(self.app.advanced_sections.keys()),
-            {"插值与反插值", "平滑显示", "塑性应变对齐", "起点归零 / 基线校正"},
+            {"插值与反插值", "平滑显示", "应变 / 应力对齐", "起点归零 / 基线校正"},
         )
         self.assertTrue(all(not section["body"].winfo_ismapped() for section in self.app.advanced_sections.values()))
 
